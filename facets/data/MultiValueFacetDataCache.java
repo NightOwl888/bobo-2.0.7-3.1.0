@@ -14,28 +14,31 @@ import org.apache.lucene.index.TermDocs;
 import org.apache.lucene.index.TermEnum;
 import org.apache.lucene.index.TermPositions;
 import org.apache.lucene.search.ScoreDoc;
-import org.apache.lucene.search.ScoreDocComparator;
-import org.apache.lucene.search.SortField;
+import org.apache.lucene.util.OpenBitSet;
 
+import com.browseengine.bobo.api.BoboIndexReader;
 import com.browseengine.bobo.api.BoboIndexReader.WorkArea;
+import com.browseengine.bobo.facets.range.MultiDataCacheBuilder;
+import com.browseengine.bobo.sort.DocComparator;
+import com.browseengine.bobo.sort.DocComparatorSource;
 import com.browseengine.bobo.util.BigIntBuffer;
 import com.browseengine.bobo.util.BigNestedIntArray;
-import com.browseengine.bobo.util.StringArrayComparator;
 import com.browseengine.bobo.util.BigNestedIntArray.BufferedLoader;
 import com.browseengine.bobo.util.BigNestedIntArray.Loader;
+import com.browseengine.bobo.util.StringArrayComparator;
 
 /**
  * @author ymatsuda
  *
  */
-public class MultiValueFacetDataCache extends FacetDataCache
+public class MultiValueFacetDataCache<T> extends FacetDataCache<T>
 {
   private static final long serialVersionUID = 1L;
   private static Logger logger = Logger.getLogger(MultiValueFacetDataCache.class);
  
   public final BigNestedIntArray _nestedArray;
-  private int _maxItems = BigNestedIntArray.MAX_ITEMS;
-  private boolean _overflow = false;
+  protected int _maxItems = BigNestedIntArray.MAX_ITEMS;
+  protected boolean _overflow = false;
   
   public MultiValueFacetDataCache()
   {
@@ -43,14 +46,20 @@ public class MultiValueFacetDataCache extends FacetDataCache
     _nestedArray = new BigNestedIntArray();
   }
   
-  public void setMaxItems(int maxItems)
+  public MultiValueFacetDataCache<T> setMaxItems(int maxItems)
   {
     _maxItems = Math.min(maxItems, BigNestedIntArray.MAX_ITEMS);
     _nestedArray.setMaxItems(_maxItems);
+    return this;
   }
   
   @Override
-  public void load(String fieldName, IndexReader reader, TermListFactory listFactory) throws IOException
+  public int getNumItems(int docid){
+	  return _nestedArray.getNumItems(docid);
+  }
+  
+  @Override
+  public void load(String fieldName, IndexReader reader, TermListFactory<T> listFactory) throws IOException
   {
     this.load(fieldName, reader, listFactory, new WorkArea());
   }
@@ -63,18 +72,20 @@ public class MultiValueFacetDataCache extends FacetDataCache
    * @param workArea
    * @throws IOException
    */
-  public void load(String fieldName, IndexReader reader, TermListFactory listFactory, WorkArea workArea) throws IOException
+  public void load(String fieldName, IndexReader reader, TermListFactory<T> listFactory, WorkArea workArea) throws IOException
   {
+    long t0 = System.currentTimeMillis();
     int maxdoc = reader.maxDoc();
     BufferedLoader loader = getBufferedLoader(maxdoc, workArea);
 
     TermEnum tenum = null;
     TermDocs tdoc = null;
-    TermValueList list = (listFactory == null ? new TermStringList() : listFactory.createTermList());
+    TermValueList<T> list = (listFactory == null ? (TermValueList<T>)new TermStringList() : listFactory.createTermList());
     IntArrayList minIDList = new IntArrayList();
     IntArrayList maxIDList = new IntArrayList();
     IntArrayList freqList = new IntArrayList();
-
+    OpenBitSet bitset = new OpenBitSet(maxdoc + 1);
+    int negativeValueCount = getNegativeValueCount(reader, fieldName.intern()); 
     int t = 0; // current term number
     list.add(null);
     minIDList.add(-1);
@@ -97,7 +108,6 @@ public class MultiValueFacetDataCache extends FacetDataCache
 
           String val = term.text();
 
-          // if (val!=null && val.length()>0){
           if (val != null)
           {
             list.add(val);
@@ -107,17 +117,21 @@ public class MultiValueFacetDataCache extends FacetDataCache
             int df = 0;
             int minID = -1;
             int maxID = -1;
+            int valId = (t - 1 < negativeValueCount) ? (negativeValueCount - t + 1) : t;
             if(tdoc.next())
             {
               df++;
               int docid = tdoc.doc();
-              if(!loader.add(docid, t)) logOverflow(fieldName);
+              if(!loader.add(docid, valId)) logOverflow(fieldName);
               minID = docid;
+              bitset.fastSet(docid);
               while(tdoc.next())
               {
                 df++;
                 docid = tdoc.doc();
-                if(!loader.add(docid, t)) logOverflow(fieldName);
+               
+                if(!loader.add(docid, valId)) logOverflow(fieldName);
+                bitset.fastSet(docid);
               }
               maxID = docid;
             }
@@ -153,7 +167,7 @@ public class MultiValueFacetDataCache extends FacetDataCache
 
     try
     {
-      _nestedArray.load(maxdoc, loader);
+      _nestedArray.load(maxdoc + 1, loader);
     }
     catch (IOException e)
     {
@@ -168,6 +182,26 @@ public class MultiValueFacetDataCache extends FacetDataCache
     this.freqs = freqList.toIntArray();
     this.minIDs = minIDList.toIntArray();
     this.maxIDs = maxIDList.toIntArray();
+
+    int doc = 0;
+    while (doc <= maxdoc && !_nestedArray.contains(doc, 0, true))
+    {
+      ++doc;
+    }
+    if (doc <= maxdoc)
+    {
+      this.minIDs[0] = doc;
+      doc = maxdoc;
+      while (doc > 0 && !_nestedArray.contains(doc, 0, true))
+      {
+        --doc;
+      }
+      if (doc > 0)
+      {
+        this.maxIDs[0] = doc;
+      }
+    }
+    this.freqs[0] = maxdoc + 1 - (int) bitset.cardinality();   
   }
 
   /**
@@ -178,14 +212,14 @@ public class MultiValueFacetDataCache extends FacetDataCache
    * @param listFactory
    * @throws IOException
    */
-  public void load(String fieldName, IndexReader reader, TermListFactory listFactory, Term sizeTerm) throws IOException
+  public void load(String fieldName, IndexReader reader, TermListFactory<T> listFactory, Term sizeTerm) throws IOException
   {
     int maxdoc = reader.maxDoc();
     Loader loader = new AllocOnlyLoader(_maxItems, sizeTerm, reader);
-    
+    int negativeValueCount = getNegativeValueCount(reader, fieldName.intern()); 
     try
     {
-      _nestedArray.load(maxdoc, loader);
+      _nestedArray.load(maxdoc + 1, loader);
     }
     catch (IOException e)
     {
@@ -198,10 +232,11 @@ public class MultiValueFacetDataCache extends FacetDataCache
     
     TermEnum tenum = null;
     TermDocs tdoc = null;
-    TermValueList list = (listFactory == null ? new TermStringList() : listFactory.createTermList());
+    TermValueList<T> list = (listFactory == null ? (TermValueList<T>)new TermStringList() : listFactory.createTermList());
     IntArrayList minIDList = new IntArrayList();
     IntArrayList maxIDList = new IntArrayList();
     IntArrayList freqList = new IntArrayList();
+    OpenBitSet bitset = new OpenBitSet(maxdoc + 1);
 
     int t = 0; // current term number
     list.add(null);
@@ -240,11 +275,14 @@ public class MultiValueFacetDataCache extends FacetDataCache
               int docid = tdoc.doc();
               if (!_nestedArray.addData(docid, t)) logOverflow(fieldName);
               minID = docid;
+              bitset.fastSet(docid);
+              int valId = (t - 1 < negativeValueCount) ? (negativeValueCount - t + 1) : t;
               while(tdoc.next())
               {
                 df++;
                 docid = tdoc.doc();
-                if(!_nestedArray.addData(docid, t)) logOverflow(fieldName);
+                if(!_nestedArray.addData(docid, valId)) logOverflow(fieldName);
+                bitset.fastSet(docid);
               }
               maxID = docid;
             }
@@ -282,9 +320,30 @@ public class MultiValueFacetDataCache extends FacetDataCache
     this.freqs = freqList.toIntArray();
     this.minIDs = minIDList.toIntArray();
     this.maxIDs = maxIDList.toIntArray();
+
+    int doc = 0;
+    while (doc <= maxdoc && !_nestedArray.contains(doc, 0, true))
+    {
+      ++doc;
+    }
+    if (doc <= maxdoc)
+    {
+      this.minIDs[0] = doc;
+      doc = maxdoc;
+      while (doc > 0 && !_nestedArray.contains(doc, 0, true))
+      {
+        --doc;
+      }
+      if (doc > 0)
+      {
+        this.maxIDs[0] = doc;
+      }
+    }
+    this.freqs[0] = maxdoc + 1 - (int) bitset.cardinality();
+    
   }
   
-  private void logOverflow(String fieldName)
+  protected void logOverflow(String fieldName)
   {
     if (!_overflow)
     {
@@ -293,7 +352,7 @@ public class MultiValueFacetDataCache extends FacetDataCache
     }
   }
 
-  private BufferedLoader getBufferedLoader(int maxdoc, WorkArea workArea)
+  protected BufferedLoader getBufferedLoader(int maxdoc, WorkArea workArea)
   {
     if(workArea == null)
     {
@@ -377,28 +436,33 @@ public class MultiValueFacetDataCache extends FacetDataCache
               ((bytes[1] & 0xFF) <<  8) |  (bytes[0] & 0xFF);
     }
   }
-  
-    public ScoreDocComparator getScoreDocComparator()
-	{
-		return new MultiFacetScoreDocComparator(this);
-	}
     
-	public final static class MultiFacetScoreDocComparator implements ScoreDocComparator{
-		private MultiValueFacetDataCache _dataCache;
-		public MultiFacetScoreDocComparator(MultiValueFacetDataCache dataCache){
-			_dataCache=dataCache;
+	public final static class MultiFacetDocComparatorSource extends DocComparatorSource{
+		private MultiDataCacheBuilder cacheBuilder;
+		public MultiFacetDocComparatorSource(MultiDataCacheBuilder multiDataCacheBuilder){
+		  cacheBuilder = multiDataCacheBuilder;
 		}
-		public final int compare(ScoreDoc i, ScoreDoc j) {
-			return _dataCache._nestedArray.compare(i.doc, j.doc);
-		}
+		
+		@Override
+		public DocComparator getComparator(final IndexReader reader, int docbase)
+				throws IOException {
+			if (!(reader instanceof BoboIndexReader)) throw new IllegalStateException("reader must be instance of "+BoboIndexReader.class);
+			BoboIndexReader boboReader = (BoboIndexReader)reader;
+			final MultiValueFacetDataCache dataCache = cacheBuilder.build(boboReader);
+			return new DocComparator(){
+				
+				@Override
+				public int compare(ScoreDoc doc1, ScoreDoc doc2) {
+					return dataCache._nestedArray.compare(doc1.doc, doc2.doc);
+				}
 
-		public final int sortType() {
-			return SortField.CUSTOM;
-		}
-
-		public final Comparable sortValue(ScoreDoc i) {
-          String[] vals = _dataCache._nestedArray.getTranslatedData(i.doc, _dataCache.valArray);
-          return new StringArrayComparator(vals);
+				@Override
+				public Comparable value(ScoreDoc doc) {
+					String[] vals = dataCache._nestedArray.getTranslatedData(doc.doc, dataCache.valArray);
+			          return new StringArrayComparator(vals);
+				}
+				
+			};
 		}
 	}
 }

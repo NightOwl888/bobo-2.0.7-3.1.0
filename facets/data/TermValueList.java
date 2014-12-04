@@ -16,9 +16,10 @@ import java.util.ListIterator;
  *   <li> {@link #seal()} is introduce to trim the List size, similar to {@link ArrayList#trimToSize()}, once it is called, no add should be performed.</li>
  *   </u>
  */
-public abstract class TermValueList implements List<String>{
+public abstract class TermValueList<T> implements List<String>{
 	
 	protected abstract List<?> buildPrimitiveList(int capacity);
+	protected Class<T> _type;
 	public abstract String format(Object o);
 	public abstract void seal();
 	
@@ -34,10 +35,20 @@ public abstract class TermValueList implements List<String>{
 		_innerList=buildPrimitiveList(capacity);
 	}
 	
+	/**
+	 * The user of this method should not try to alter the content of the list,
+	 * which may result in data inconsistency.
+	 * And of the content can be accessed using the getRawValue(int) method.
+	 * @return the inner list
+	 */
 	public List<?> getInnerList(){
 		return _innerList;
 	}
 	
+	/**
+	 * Add a new value to the list. <b>It is important to add the values in sorted (ASC) order.</b>
+	 * Our algorithm uses binary searches and priority queues, both of which fails when the ordering is wrong.
+	 */
 	abstract public boolean add(String o);
 
 	public void add(int index, String element)
@@ -47,7 +58,12 @@ public abstract class TermValueList implements List<String>{
 
 	public boolean addAll(Collection<? extends String> c)
 	{
-		throw new IllegalStateException("not supported");
+	  boolean ret = true;
+	  for(String s: c)
+	  {
+	    ret &= add(s);
+	  }
+	  return ret;
 	}
 
 	public boolean addAll(int index, Collection<? extends String> c)
@@ -62,23 +78,39 @@ public abstract class TermValueList implements List<String>{
 	public boolean contains(Object o){
 		return indexOf(o)>=0;
 	}
+	
+	public abstract boolean containsWithType(T val);
+	
 
 	public boolean containsAll(Collection<?> c)
 	{
 		throw new IllegalStateException("not supported");
 	}
 
+	public Class<T> getType()
+	{
+	  return _type;
+	}
 	public String get(int index) {
 		return format(_innerList.get(index));
 	}
 	
-	public Object getRawValue(int index){
-		return _innerList.get(index);
+	public T getRawValue(int index){
+		return (T) _innerList.get(index);
 	}
-
+	public Comparable getComparableValue(int index){    
+	  return (Comparable) _innerList.get(index);
+  }
 	abstract public int indexOf(Object o);
 
-	public boolean isEmpty() {
+  public int indexOfWithOffset(Object value, int offset)
+  {
+    throw new IllegalStateException("not supported");
+  }
+
+  public abstract int indexOfWithType(T o);
+
+  public boolean isEmpty() {
 		return _innerList.isEmpty();
 	}
 

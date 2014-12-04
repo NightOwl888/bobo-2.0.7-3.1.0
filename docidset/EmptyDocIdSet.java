@@ -5,20 +5,20 @@ import java.io.IOException;
 import org.apache.lucene.search.DocIdSetIterator;
 
 
-public class EmptyDocIdSet extends RandomAccessDocIdSet 
+public final class EmptyDocIdSet extends RandomAccessDocIdSet 
 {
   private static EmptyDocIdSet SINGLETON=new EmptyDocIdSet();
 
   private static class EmptyDocIdSetIterator extends DocIdSetIterator
   {
     @Override
-    public int doc() {	return -1; }
+    public int docID() {	return -1; }
 
     @Override
-    public boolean next() throws IOException { return false;  }
+    public int nextDoc() throws IOException { return DocIdSetIterator.NO_MORE_DOCS;  }
 
     @Override
-    public boolean skipTo(int target) throws IOException { return false; }
+    public int advance(int target) throws IOException {return DocIdSetIterator.NO_MORE_DOCS; }
   }
 
   private static EmptyDocIdSetIterator SINGLETON_ITERATOR = new EmptyDocIdSetIterator();

@@ -1,7 +1,8 @@
 package com.browseengine.bobo.api;
 
 import java.io.Serializable;
-import java.util.Comparator;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * specifies how facets are to be returned for a browse
@@ -40,7 +41,7 @@ public class FacetSpec implements Serializable {
 	private boolean expandSelection;
 	private int minCount;
 	private ComparatorFactory _comparatorFactory;
-
+	private Map<String, String> properties;
 	/**
 	 * Constructor.
 	 *
@@ -50,10 +51,12 @@ public class FacetSpec implements Serializable {
 		minCount=1;
 		expandSelection = false;
 		_comparatorFactory = null;
+		properties = new HashMap<String, String>();
 	}				
 	
-	public void setCustomComparatorFactory(ComparatorFactory comparatorFactory){
+	public FacetSpec setCustomComparatorFactory(ComparatorFactory comparatorFactory){
 		_comparatorFactory = comparatorFactory;
+    return this;
 	}
 	
 	public ComparatorFactory getCustomComparatorFactory(){
@@ -62,11 +65,13 @@ public class FacetSpec implements Serializable {
 	
     /**
 	 * Sets the minimum number of hits a choice would need to have to be returned.
-	 * @param minCount minimum count
-	 * @see #getMinHitCount()
+	 *
+     * @param minCount minimum count
+     * @see #getMinHitCount()
 	 */
-	public void setMinHitCount(int minCount){
+	public FacetSpec setMinHitCount(int minCount){
 		this.minCount=minCount;
+    return this;
 	}
 	
 	/**
@@ -89,11 +94,13 @@ public class FacetSpec implements Serializable {
 
 	/**
 	 * Sets the choice sort order
-	 * @param order sort order
-	 * @see #getOrderBy()
+	 *
+   * @param order sort order
+   * @see #getOrderBy()
 	 */
-	public void setOrderBy(FacetSortSpec order) {
+	public FacetSpec setOrderBy(FacetSortSpec order) {
 		orderBy = order;
+    return this;
 	}				
 
 	/**
@@ -107,11 +114,13 @@ public class FacetSpec implements Serializable {
 
 	/**
 	 * Sets the maximum number of choices to return.
-	 * @param maxCount max number of choices to return, default = 0 which means all
-	 * @see #getMaxCount()
+	 *
+   * @param maxCount max number of choices to return, default = 0 which means all
+   * @see #getMaxCount()
 	 */
-	public void setMaxCount(int maxCount) {
+	public FacetSpec setMaxCount(int maxCount) {
 		max = maxCount;
+    return this;
 	}
 
 	@Override
@@ -135,10 +144,43 @@ public class FacetSpec implements Serializable {
 
 	/**
 	 * Sets whether we are expanding sibling choices
-	 * @param expandSelection indicating whether to expand sibling choices.
-	 * @see #isExpandSelection()
+	 *
+   * @param expandSelection indicating whether to expand sibling choices.
+   * @see #isExpandSelection()
 	 */
-	public void setExpandSelection(boolean expandSelection) {
+	public FacetSpec setExpandSelection(boolean expandSelection) {
 		this.expandSelection = expandSelection;
+    return this;
 	}
+
+  /**
+   * Gets  custom properties for the facet search. For example AttributeFacetHandler uses this to perform custom facet filtering
+   */
+  public Map<String, String> getProperties() {
+    return properties;
+  }
+
+  /**
+   * Sets  custom properties for the facet search. For example AttributeFacetHandler uses this to perform custom facet filtering
+   * @param properties
+   */
+  public FacetSpec setProperties(Map<String, String> properties) {
+    this.properties = properties;
+    return this;
+  }
+
+  @Override
+  public FacetSpec clone() {
+    Map<String, String> properties = getProperties();
+    Map<String, String> clonedProperties = new HashMap<String, String>(properties.size());
+    clonedProperties.putAll(properties);
+
+    return new FacetSpec()
+      .setCustomComparatorFactory(getCustomComparatorFactory())
+      .setExpandSelection(isExpandSelection())
+      .setMaxCount(getMaxCount())
+      .setMinHitCount(getMinHitCount())
+      .setOrderBy(getOrderBy())
+      .setProperties(clonedProperties);
+  }
 }

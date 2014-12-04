@@ -15,8 +15,8 @@ import com.browseengine.bobo.api.BrowseFacet;
 import com.browseengine.bobo.api.BrowseRequest;
 import com.browseengine.bobo.api.FacetAccessible;
 import com.browseengine.bobo.api.FacetSpec;
-import com.browseengine.bobo.api.MappedFacetAccessible;
 import com.browseengine.bobo.api.FacetSpec.FacetSortSpec;
+import com.browseengine.bobo.api.MappedFacetAccessible;
 import com.browseengine.bobo.facets.impl.FacetHitcountComparatorFactory;
 
 /**
@@ -78,7 +78,7 @@ public class ListMerger
       for(Iterator<T> iterator : iterators)
       {
         IteratorNode ctx = new IteratorNode(iterator);
-        if(ctx.fetch()) _queue.insert(ctx);
+        if(ctx.fetch()) _queue.add(ctx);
       }
     }
     
@@ -88,7 +88,7 @@ public class ListMerger
       for(Iterator<T> iterator : iterators)
       {
         IteratorNode ctx = new IteratorNode(iterator);
-        if(ctx.fetch()) _queue.insert(ctx);
+        if(ctx.fetch()) _queue.add(ctx);
       }
     }
 
@@ -104,7 +104,7 @@ public class ListMerger
       T val = ctx._curVal;
       if (ctx.fetch())
       {
-        _queue.adjustTop();
+        _queue.updateTop();
       }
       else
       {
@@ -143,6 +143,7 @@ public class ListMerger
   
   private static <T> ArrayList<T> mergeLists(int offset, int count, Iterator<T> mergedIter)
   {
+	if (count == 0) return new ArrayList();
     for (int c = 0; c < offset && mergedIter.hasNext(); c++)
     {
       mergedIter.next();
@@ -158,10 +159,14 @@ public class ListMerger
     return mergedList;
   }
   
-  public static Comparator<BrowseFacet> FACET_VAL_COMPARATOR = new Comparator<BrowseFacet>(){
+  public static final Comparator<BrowseFacet> FACET_VAL_COMPARATOR = new Comparator<BrowseFacet>(){
 
-	public int compare(BrowseFacet o1, BrowseFacet o2) {
-		return o1.getValue().compareTo(o2.getValue());
+	public int compare(BrowseFacet o1, BrowseFacet o2) {		
+	  int ret = o1.getValue().compareTo(o2.getValue());
+	  if (o1.getValue().startsWith("-") && o2.getValue().startsWith("-")) {
+	    ret =-ret;
+	  }
+	  return ret;
 	}
 	  
   };

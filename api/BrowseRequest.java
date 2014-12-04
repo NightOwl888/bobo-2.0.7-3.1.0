@@ -36,6 +36,9 @@ import org.apache.lucene.search.Filter;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.SortField;
 
+import com.browseengine.bobo.facets.FacetHandlerInitializerParam;
+import com.browseengine.bobo.mapred.BoboMapFunctionWrapper;
+
 /**
  * Browse Request.
  * @author jwang
@@ -45,16 +48,62 @@ import org.apache.lucene.search.SortField;
 public class BrowseRequest implements Serializable{
 
 	private static final long serialVersionUID = 3172092238778154933L;
-	
-	private HashMap<String,BrowseSelection> _selections;
+  /**
+   * The transaction ID
+   */
+	private long tid = -1;
+	/**
+	 * Get the transaction ID.
+	 * @return the transaction ID.
+	 */
+	public final long getTid()
+  {
+    return tid;
+  }
+
+  /**
+   * Set the transaction ID;
+   * @param tid
+   */
+  public final void setTid(long tid)
+  {
+    this.tid = tid;
+  }
+
+    private HashMap<String,BrowseSelection> _selections;
 	private ArrayList<SortField> _sortSpecs;
 	private Map<String,FacetSpec> _facetSpecMap;
-	private Query _query;
+	private Map<String,FacetHandlerInitializerParam> _facetHandlerDataMap;
+    private Query _query;
 	private int _offset;
 	private int _count;
 	private boolean _fetchStoredFields;
 	private Filter _filter;
+	private boolean _showExplanation;
+	private String _groupBy;  // TODO: Leave here for backward compatible reason, will remove it later.
+	private String[] _groupByMulti;
+	private int _maxPerGroup;
+	private boolean _collectDocIdCache;
+	private Set<String> _termVectorsToFetch;
+	private BoboMapFunctionWrapper mapReduceWrapper;
 	
+	public Set<String> getTermVectorsToFetch(){
+	  return _termVectorsToFetch;
+	}
+	
+	public void setTermVectorsToFetch(Set<String> termVectorsToFetch){
+	  _termVectorsToFetch = termVectorsToFetch;
+	}
+	
+	public boolean isShowExplanation() {
+		return _showExplanation;
+	}
+
+	public BrowseRequest setShowExplanation(boolean showExplanation) {
+		_showExplanation = showExplanation;
+    return this;
+	}
+
 	public Set<String> getSelectionNames(){
 		return _selections.keySet();
 	}
@@ -63,9 +112,10 @@ public class BrowseRequest implements Serializable{
 		_selections.remove(name);
 	}
 	
-	public void setFacetSpecs(Map<String,FacetSpec> facetSpecMap)
+	public BrowseRequest setFacetSpecs(Map<String, FacetSpec> facetSpecMap)
 	{
 		_facetSpecMap = facetSpecMap;
+    return this;
 	}
 	
 	public Map<String,FacetSpec> getFacetSpecs()
@@ -73,6 +123,24 @@ public class BrowseRequest implements Serializable{
 		return _facetSpecMap;
 	}
 	
+  /**
+   * @return The map between <b>RuntimeFacetHandler</b> names and their corresponding initialization data.
+   */
+  public Map<String, FacetHandlerInitializerParam> getFacetHandlerDataMap()
+  {
+    return _facetHandlerDataMap;
+  }
+
+  /**
+   * Sets the map between RuntimeFacetHandler names and their corresponding initialization data.
+   * @param facetHandlerDataMap
+   */
+  public BrowseRequest setFacetHandlerDataMap(
+          Map<String, FacetHandlerInitializerParam> facetHandlerDataMap)
+  {
+    _facetHandlerDataMap = facetHandlerDataMap;
+    return this;
+  }
 	
 	public int getSelectionCount()
 	{
@@ -81,10 +149,11 @@ public class BrowseRequest implements Serializable{
 	
 	/**
 	 * Set a default filter
-	 * @param filter
-	 */
-	public void setFilter(Filter filter){
+   * @param filter
+   */
+	public BrowseRequest setFilter(Filter filter){
 		_filter=filter;
+    return this;
 	}
 	
 	/**
@@ -94,8 +163,9 @@ public class BrowseRequest implements Serializable{
 		return _filter;
 	}
 	
-	public void clearSelections(){
+	public BrowseRequest clearSelections(){
 		_selections.clear();
+    return this;
 	}
 	
 	/**
@@ -116,30 +186,72 @@ public class BrowseRequest implements Serializable{
 		_selections=new HashMap<String,BrowseSelection>();
 		_sortSpecs=new ArrayList<SortField>();
 		_facetSpecMap=new HashMap<String,FacetSpec>();
+		_facetHandlerDataMap = new HashMap<String, FacetHandlerInitializerParam>();
 		_filter = null;
 		_fetchStoredFields = false;
+		_groupBy = null;
+    _groupByMulti = null;
+    _maxPerGroup = 0;
+    _collectDocIdCache = false;
 	}
 	
-	public void clearSort(){
+	public BrowseRequest clearSort(){
 		_sortSpecs.clear();
+    return this;
 	}
 	
 	public boolean isFetchStoredFields(){
 		return _fetchStoredFields;
 	}
 	
-	public void setFetchStoredFields(boolean fetchStoredFields){
+	public BrowseRequest setFetchStoredFields(boolean fetchStoredFields){
 		_fetchStoredFields = fetchStoredFields;
+    return this;
+	}
+	
+	public String[] getGroupBy(){
+    if (_groupByMulti == null && _groupBy != null)
+      _groupByMulti = new String[]{_groupBy};
+
+		return _groupByMulti;
+	}
+	
+	public BrowseRequest setGroupBy(String[] groupBy){
+		_groupByMulti = groupBy;
+    if (_groupByMulti != null && _groupByMulti.length != 0)
+      _groupBy = _groupByMulti[0];
+
+    return this;
+	}
+
+	public int getMaxPerGroup(){
+		return _maxPerGroup;
+	}
+	
+	public BrowseRequest setMaxPerGroup(int maxPerGroup){
+		_maxPerGroup = maxPerGroup;
+    return this;
+	}
+
+	public boolean getCollectDocIdCache(){
+		return _collectDocIdCache;
+	}
+	
+	public BrowseRequest setCollectDocIdCache(boolean collectDocIdCache){
+		_collectDocIdCache = collectDocIdCache;
+    return this;
 	}
 	
 	/**
 	 * Sets a facet spec
-	 * @param name field name
-	 * @param facetSpec Facet spec
-	 * @see #getFacetSpec(String)
+	 *
+   * @param name field name
+   * @param facetSpec Facet spec
+   * @see #getFacetSpec(String)
 	 */
-	public void setFacetSpec(String name,FacetSpec facetSpec){
+	public BrowseRequest setFacetSpec(String name, FacetSpec facetSpec){
 		_facetSpecMap.put(name,facetSpec);
+    return this;
 	}
 	
 	/**
@@ -151,7 +263,26 @@ public class BrowseRequest implements Serializable{
 	public FacetSpec getFacetSpec(String name){
 		return _facetSpecMap.get(name);
 	}
-	
+
+	/**
+   * @param name is the name of the <b>RuntimeFacetHandler</b>.
+   * @param data is the data Bobo is to use to initialize the corresponding RuntimeFacetHandler.
+   */
+	public BrowseRequest setFacetHandlerData(String name, FacetHandlerInitializerParam data)
+	{
+	  _facetHandlerDataMap.put(name, data);
+    return this;
+	}
+
+	/**
+	 * @param name is the name of the <b>RuntimeFacetHandler</b>.
+	 * @return the data Bobo is to use to initialize the corresponding RuntimeFacetHandler.
+	 */
+	public FacetHandlerInitializerParam getFacethandlerData(String name)
+	{
+	  return _facetHandlerDataMap.get(name);
+	}
+
 	/**
 	 * Gets the number of hits to return. Part of the paging parameters.
 	 * @return number of hits to return.
@@ -163,11 +294,13 @@ public class BrowseRequest implements Serializable{
 
 	/**
 	 * Sets the number of hits to return. Part of the paging parameters.
-	 * @param count number of hits to return.
-	 * @see #getCount()
+	 *
+   * @param count number of hits to return.
+   * @see #getCount()
 	 */
-	public void setCount(int count) {
+	public BrowseRequest setCount(int count) {
 		_count = count;
+    return this;
 	}
 
 	/**
@@ -181,20 +314,24 @@ public class BrowseRequest implements Serializable{
 
 	/**
 	 * Sets of the offset. Part of the paging parameters.
-	 * @param offset offset
-	 * @see #getOffset()
+	 *
+   * @param offset offset
+   * @see #getOffset()
 	 */
-	public void setOffset(int offset) {
+	public BrowseRequest setOffset(int offset) {
 		_offset = offset;
+    return this;
 	}
 
 	/**
 	 * Set the search query
-	 * @param query lucene search query
-	 * @see #getQuery()
+	 *
+   * @param query lucene search query
+   * @see #getQuery()
 	 */
-	public void setQuery(Query query){
+	public BrowseRequest setQuery(Query query){
 		_query=query;
+    return this;
 	}
 	
 	/**
@@ -208,17 +345,19 @@ public class BrowseRequest implements Serializable{
 	
 	/**
 	 * Adds a browse selection
-	 * @param sel selection
-	 * @see #getSelections()
+	 *
+   * @param sel selection
+   * @see #getSelections()
 	 */
-	public void addSelection(BrowseSelection sel){
+	public BrowseRequest addSelection(BrowseSelection sel){
 		String[] vals = sel.getValues();
 		if (vals==null || vals.length == 0)
 		{
 			String[] notVals = sel.getNotValues();
-			if (notVals==null || notVals.length == 0) return;		// skip adding useless selections
+			if (notVals==null || notVals.length == 0) return null;
 		}
 		_selections.put(sel.getFieldName(),sel);
+    return this;
 	}
 	
 	/**
@@ -243,18 +382,30 @@ public class BrowseRequest implements Serializable{
 		return _selections;
 	}
 	
-	public void putAllSelections(Map<String,BrowseSelection> map){
+	public BrowseRequest putAllSelections(Map<String, BrowseSelection> map){
 		_selections.putAll(map);
+    return this;
 	}
-	
+		
+	public BoboMapFunctionWrapper getMapReduceWrapper() {
+		return mapReduceWrapper;
+	}
+
+	public BrowseRequest setMapReduceWrapper(BoboMapFunctionWrapper mapReduceWrapper) {
+		this.mapReduceWrapper = mapReduceWrapper;
+		return this;
+	}
+
 	/**
 	 * Add a sort spec
-	 * @param sortSpec sort spec
-	 * @see #getSort() 
+	 *
+   * @param sortSpec sort spec
+   * @see #getSort()
 	 * @see #setSort(SortField[])
 	 */
-	public void addSortField(SortField sortSpec){
+	public BrowseRequest addSortField(SortField sortSpec){
 		_sortSpecs.add(sortSpec);
+    return this;
 	}
 
 	/**
@@ -269,15 +420,17 @@ public class BrowseRequest implements Serializable{
 	
 	/**
 	 * Sets the sort criteria
-	 * @param sorts sort criteria
-	 * @see #addSortField(SortField)
+	 *
+   * @param sorts sort criteria
+   * @see #addSortField(SortField)
 	 * @see #getSort()
 	 */
-	public void setSort(SortField[] sorts){
+	public BrowseRequest setSort(SortField[] sorts){
 		_sortSpecs.clear();
 		for (int i=0;i<sorts.length;++i){
 			_sortSpecs.add(sorts[i]);
 		}
+    return this;
 	}
 
 	@Override
@@ -288,7 +441,8 @@ public class BrowseRequest implements Serializable{
       buf.append("sort spec: ").append(_sortSpecs).append('\n');
       buf.append("selections: ").append(_selections).append('\n');
       buf.append("facet spec: ").append(_facetSpecMap).append('\n');
-      buf.append("fetch stored fields: ").append(_fetchStoredFields);
+      buf.append("fetch stored fields: ").append(_fetchStoredFields).append('\n');
+      buf.append("group by: ").append(_groupBy);
       return buf.toString();
 	}
 }

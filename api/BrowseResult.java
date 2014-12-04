@@ -26,11 +26,18 @@
 package com.browseengine.bobo.api;
 
 import java.io.Serializable;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.Map.Entry;
+
+import com.browseengine.bobo.mapred.MapReduceResult;
+import com.browseengine.bobo.mapred.BoboMapFunctionWrapper;
+import com.browseengine.bobo.sort.SortCollector;
 
 
 /**
@@ -38,11 +45,39 @@ import java.util.Map.Entry;
  */
 public class BrowseResult implements Serializable{
 	private static final long serialVersionUID = -8620935391852879446L;
+  /**
+   * The transaction ID
+   */
+  private long tid = -1;
+  /**
+   * Get the transaction ID.
+   * @return the transaction ID.
+   */
+  public final long getTid()
+  {
+    return tid;
+  }
+
+  /**
+   * Set the transaction ID;
+   * @param tid
+   */
+  public final void setTid(long tid)
+  {
+    this.tid = tid;
+  }
+
 	private int numHits;
+	private int numGroups;
 	private int totalDocs;
+	private FacetAccessible[] _groupAccessibles;
+    transient private SortCollector _sortCollector;
+  //private int totalGroups;
 	private Map<String,FacetAccessible> _facetMap;
 	private BrowseHit[] hits;
 	private long time;
+	private MapReduceResult mapReduceResult;
+  private List<String> errors;
 	private static BrowseHit[] NO_HITS=new BrowseHit[0];
 		
 	/**
@@ -51,11 +86,49 @@ public class BrowseResult implements Serializable{
 	public BrowseResult() {
 		super();
 		_facetMap=new HashMap<String,FacetAccessible>();
+    _groupAccessibles = null;
+    _sortCollector = null;
 		numHits=0;
+		numGroups=0;
 		totalDocs=0;
+    //totalGroups=0;
 		hits=null;
 		time=0L;
 	}
+
+  /**
+   * Get the group accessible.
+   * @return the group accessible.
+   */
+  public FacetAccessible[] getGroupAccessibles() {
+    return _groupAccessibles;
+  }
+
+  /**
+   * Set the group accessible.
+   * @param groupAccessible the group accessible.
+   */
+  public BrowseResult setGroupAccessibles(FacetAccessible[] groupAccessibles) {
+    _groupAccessibles = groupAccessibles;
+    return this;
+  }
+
+  /**
+   * Get the sort collector.
+   * @return the sort collector.
+   */
+  public SortCollector getSortCollector() {
+    return _sortCollector;
+  }
+
+  /**
+   * Set the sort collector.
+   * @param sortCollector the sort collector
+   */
+  public BrowseResult setSortCollector(SortCollector sortCollector) {
+    _sortCollector = sortCollector;
+    return this;
+  }
 	
 	/**
 	 * Get the facets by name
@@ -77,11 +150,33 @@ public class BrowseResult implements Serializable{
 
 	/**
 	 * Sets the hit count
-	 * @param hits hit count
-	 * @see #getNumHits()
+	 *
+   * @param hits hit count
+   * @see #getNumHits()
 	 */
-	public void setNumHits(int hits) {
+	public BrowseResult setNumHits(int hits) {
 		numHits = hits;
+    return this;
+	}
+
+	/**
+	 * Get the group count
+	 * @return group count
+	 * @see #setNumGroups(int)
+	 */
+	public int getNumGroups() {
+		return numGroups;
+	}
+
+	/**
+	 * Sets the group count
+	 *
+   * @param groups group count
+   * @see #getNumGroups()
+	 */
+	public BrowseResult setNumGroups(int groups) {
+		numGroups = groups;
+    return this;
 	}
 
 	/**
@@ -95,36 +190,60 @@ public class BrowseResult implements Serializable{
 
 	/**
 	 * Sets the total number of docs in the index
-	 * @param docs total number of docs in the index
-	 * @see #getTotalDocs()
+	 *
+   * @param docs total number of docs in the index
+   * @see #getTotalDocs()
 	 */
-	public void setTotalDocs(int docs) {
+	public BrowseResult setTotalDocs(int docs) {
 		totalDocs = docs;
+    return this;
 	}
 	
 	/**
-	 * Add a container full of choices
-	 * @param facets container full of facets
+	 * Gets the total number of groups in the index
+	 * @return total number of groups in the index.
+	 * @see #setTotalGroups(int)
 	 */
-	public void addFacets(String name,FacetAccessible facets){
+	//public int getTotalGroups() {
+		//return totalGroups;
+	//}
+
+	/**
+	 * Sets the total number of groups in the index
+	 * @param groups total number of groups in the index
+	 * @see #getTotalGroups()
+	 */
+	//public void setTotalGroups(int groups) {
+		//totalGroups = groups;
+	//}
+	
+	/**
+	 * Add a container full of choices
+   * @param facets container full of facets
+   */
+	public BrowseResult addFacets(String name, FacetAccessible facets){
 		_facetMap.put(name,facets);
+    return this;
 	}	
 	
 	/**
 	 * Add all of the given FacetAccessible to this BrowseResult
-	 * @param facets map of facets to add to the result set
-	 */
-	public void addAll(Map<String,FacetAccessible> facets){
+   * @param facets map of facets to add to the result set
+   */
+	public BrowseResult addAll(Map<String, FacetAccessible> facets){
 		_facetMap.putAll(facets);
+    return this;
 	}
 	
 	/**
 	 * Sets the hits
-	 * @param hits hits
-	 * @see #getHits()
+	 *
+   * @param hits hits
+   * @see #getHits()
 	 */
-	public void setHits(BrowseHit[] hits){
+	public BrowseResult setHits(BrowseHit[] hits){
 		this.hits=hits;
+    return this;
 	}
 	
 	/**
@@ -138,8 +257,9 @@ public class BrowseResult implements Serializable{
 	
 	/**
 	 * Sets the search time in milliseconds
-	 * @param time search time
-	 * @see #getTime()
+	 *
+   * @param time search time
+   * @see #getTime()
 	 */
 	public void setTime(long time){
 		this.time=time;
@@ -162,6 +282,14 @@ public class BrowseResult implements Serializable{
 		return _facetMap;
 	}
     
+	public MapReduceResult getMapReduceResult() {
+		return mapReduceResult;
+	}
+
+	public void setMapReduceResult(MapReduceResult mapReduceWrapper) {
+		this.mapReduceResult = mapReduceWrapper;
+	}
+
 	public static String toString(Map<String,FacetAccessible> map) {
 		StringBuilder buffer=new StringBuilder();
 		Set<Entry<String,FacetAccessible>> entries = map.entrySet();
@@ -187,4 +315,38 @@ public class BrowseResult implements Serializable{
 		buf.append("hits: ").append(Arrays.toString(hits));
 		return buf.toString();
 	}
+	
+	public void close()
+	{
+    if (_groupAccessibles != null)
+    {
+      for(FacetAccessible accessible : _groupAccessibles)
+      {
+        if (accessible != null)
+          accessible.close();
+      }
+    }
+    if (_sortCollector != null)
+      _sortCollector.close();
+	  if (_facetMap == null) return;
+	  Collection<FacetAccessible> accessibles = _facetMap.values();
+	  for(FacetAccessible fa : accessibles)
+	  {
+	    fa.close();
+	  }
+	}
+
+  public void addError(String message) {
+    if (errors == null)
+      errors = new ArrayList<String>(1);
+
+    errors.add(message);
+  }
+
+  public List<String> getBoboErrors() {
+    if (errors == null)
+      errors = new ArrayList<String>(1);
+
+    return errors;
+  }
 }

@@ -1,20 +1,14 @@
 package com.browseengine.bobo.facets.data;
 
-import it.unimi.dsi.fastutil.longs.LongArrayList;
-
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
-import java.util.Arrays;
 import java.util.Date;
-import java.util.List;
 
 /**
  * Internal data are stored in a long[] with values generated from {@link Date#getTime()}
  */
-public class TermDateList extends TermValueList {
-
-	private ThreadLocal<SimpleDateFormat> _formatter = null;
-	private String _formatString;
+public class TermDateList extends TermLongList {
+	private ThreadLocal<SimpleDateFormat> _dateFormatter = null;
 	
 	public TermDateList(String formatString)
 	{
@@ -24,7 +18,7 @@ public class TermDateList extends TermValueList {
 	
 	public TermDateList(int capacity,String formatString)
 	{
-		super(capacity);
+		super(capacity,formatString);
 		setFormatString(formatString);
 	}
 	
@@ -33,10 +27,10 @@ public class TermDateList extends TermValueList {
 		return _formatString;
 	}
 	
-	private void setFormatString(final String formatString)
+	protected void setFormatString(final String formatString)
 	{
 		_formatString=formatString;
-		_formatter = new ThreadLocal<SimpleDateFormat>() {
+		_dateFormatter = new ThreadLocal<SimpleDateFormat>() {
 		      protected SimpleDateFormat initialValue() {
 		        if (formatString!=null){
 		          return new SimpleDateFormat(formatString);
@@ -49,7 +43,8 @@ public class TermDateList extends TermValueList {
 		    };
 	}
 	
-	private long parse(String o)
+	@Override
+	protected long parse(String o)
 	{
 		if (o==null || o.length() == 0)
 		{
@@ -59,27 +54,25 @@ public class TermDateList extends TermValueList {
 		{
 			try
 			{
-			  return _formatter.get().parse(o).getTime();
+			  return _dateFormatter.get().parse(o).getTime();
 			}
 			catch(ParseException pe)
 			{
 				throw new RuntimeException(pe.getMessage(),pe);
 			}
 		}
-		
-		
-	}
-	
-	@Override
-	public boolean add(String o) {
-		return ((LongArrayList)_innerList).add(parse(o));
+
 	}
 
 	@Override
-	protected List<?> buildPrimitiveList(int capacity) {
-		return capacity>0 ? new LongArrayList(capacity) : new LongArrayList();
-	}
-
+	  public String get(int index)
+	  {
+		SimpleDateFormat formatter = _dateFormatter.get();
+	    if (formatter == null)
+	      return String.valueOf(_elements[index]);
+	    return formatter.format(_elements[index]);
+	  }
+	  
 	@Override
 	public String format(Object o) {
 		Long val;
@@ -95,22 +88,10 @@ public class TermDateList extends TermValueList {
 		}
 		else
 		{
-			SimpleDateFormat formatter=_formatter.get();
+			SimpleDateFormat formatter=_dateFormatter.get();
 			if (formatter==null) return String.valueOf(o);
 			return _formatter.get().format(new Date(val.longValue()));
 		}
-	}
-
-	@Override
-	public int indexOf(Object o) {
-		long val=parse((String)o);
-		long[] elements=((LongArrayList)_innerList).elements();
-		return Arrays.binarySearch(elements, val);
-	}
-
-	@Override
-	public void seal() {
-		((LongArrayList)_innerList).trim();
 	}
 
 }

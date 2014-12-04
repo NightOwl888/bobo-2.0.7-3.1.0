@@ -11,21 +11,21 @@ import java.util.Map;
 import java.util.Properties;
 
 import org.apache.log4j.Logger;
+import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.index.TermDocs;
 import org.apache.lucene.index.TermEnum;
 import org.apache.lucene.search.Explanation;
 import org.apache.lucene.search.ScoreDoc;
-import org.apache.lucene.search.ScoreDocComparator;
-import org.apache.lucene.search.SortField;
 
 import com.browseengine.bobo.api.BoboIndexReader;
 import com.browseengine.bobo.api.BrowseFacet;
 import com.browseengine.bobo.api.BrowseSelection;
+import com.browseengine.bobo.api.FacetIterator;
 import com.browseengine.bobo.api.FacetSpec;
 import com.browseengine.bobo.facets.FacetCountCollector;
+import com.browseengine.bobo.facets.FacetCountCollectorSource;
 import com.browseengine.bobo.facets.FacetHandler;
-import com.browseengine.bobo.facets.FacetHandlerFactory;
 import com.browseengine.bobo.facets.data.FacetDataCache;
 import com.browseengine.bobo.facets.data.TermListFactory;
 import com.browseengine.bobo.facets.data.TermStringList;
@@ -38,17 +38,18 @@ import com.browseengine.bobo.facets.filter.RandomAccessNotFilter;
 import com.browseengine.bobo.query.scoring.BoboDocScorer;
 import com.browseengine.bobo.query.scoring.FacetScoreable;
 import com.browseengine.bobo.query.scoring.FacetTermScoringFunctionFactory;
+import com.browseengine.bobo.sort.DocComparator;
+import com.browseengine.bobo.sort.DocComparatorSource;
 import com.browseengine.bobo.util.BigIntArray;
 import com.browseengine.bobo.util.BigSegmentedArray;
 import com.browseengine.bobo.util.StringArrayComparator;
 
-public class CompactMultiValueFacetHandler extends FacetHandler implements FacetHandlerFactory,FacetScoreable
+public class CompactMultiValueFacetHandler extends FacetHandler<FacetDataCache> implements FacetScoreable
 {
 	private static Logger logger = Logger.getLogger(CompactMultiValueFacetHandler.class);
 	
 	private static final int MAX_VAL_COUNT = 32;
 	private final TermListFactory _termListFactory;
-	private FacetDataCache _dataCache;
 	private final String _indexFieldName;
 
 	public CompactMultiValueFacetHandler(String name,String indexFieldName,TermListFactory termListFactory) {
@@ -69,29 +70,15 @@ public class CompactMultiValueFacetHandler extends FacetHandler implements Facet
       this(name,name,null);
     }
 	
-	public FacetHandler newInstance()
-    {
-      return new CompactMultiValueFacetHandler(getName(),_indexFieldName,_termListFactory);
-    }
-	
 	@Override
-	public ScoreDocComparator getScoreDocComparator() {
-		return new CompactMultiFacetScoreDocComparator(_dataCache);
-	}
-	
-	public final FacetDataCache getDataCache()
-	{
-		return _dataCache;
+	public DocComparatorSource getDocComparatorSource() {
+		return new CompactMultiFacetDocComparatorSource(this);
 	}
 	
   @Override
   public RandomAccessFilter buildRandomAccessFilter(String value,Properties prop) throws IOException
   {
-    int index = _dataCache.valArray.indexOf(value);
-    if(index >= 0)
-      return new CompactMultiValueFacetFilter(_dataCache, index);
-    else
-      return null;
+      return new CompactMultiValueFacetFilter(this, value);
   }
 
   @Override
@@ -120,10 +107,9 @@ public class CompactMultiValueFacetHandler extends FacetHandler implements Facet
   {
     RandomAccessFilter filter = null;
     
-    int[] indexes = FacetDataCache.convert(_dataCache,vals);
-    if(indexes.length > 0)
+    if(vals.length > 0)
     {
-      filter = new CompactMultiValueFacetFilter(_dataCache,indexes);
+      filter = new CompactMultiValueFacetFilter(this,vals);
     }
     else
     {
@@ -135,10 +121,28 @@ public class CompactMultiValueFacetHandler extends FacetHandler implements Facet
     }
     return filter;
   }
+  
+  private static int countBits(int val){
+	  int c=0;
+	  for (c=0;val>0;c++){
+		  val &= val-1;
+	  }
+	  return c;
+  }
+  
+  @Override
+  public int getNumItems(BoboIndexReader reader, int id) {
+	FacetDataCache dataCache = getFacetData(reader);
+	if (dataCache==null) return 0;
+	int encoded=dataCache.orderArray.get(id);
+	return countBits(encoded);
+  }
 
   @Override
-	public String[] getFieldValues(int id) {
-		int encoded=_dataCache.orderArray.get(id);
+	public String[] getFieldValues(BoboIndexReader reader,int id) {
+	  FacetDataCache dataCache = getFacetData(reader);
+	  if (dataCache==null) return new String[0];
+		int encoded=dataCache.orderArray.get(id);
 		if (encoded==0) {
 			return new String[]{""};
 		}
@@ -149,7 +153,7 @@ public class CompactMultiValueFacetHandler extends FacetHandler implements Facet
 			while(encoded != 0)
 			{
 				if ((encoded & 0x00000001) != 0x0){
-					valList.add(_dataCache.valArray.get(count));
+					valList.add(dataCache.valArray.get(count));
 				}
 				count++;
 				encoded >>>= 1;
@@ -159,8 +163,10 @@ public class CompactMultiValueFacetHandler extends FacetHandler implements Facet
 	}
 
     @Override
-	public Object[] getRawFieldValues(int id){
-    	int encoded=_dataCache.orderArray.get(id);
+	public Object[] getRawFieldValues(BoboIndexReader reader,int id){
+    	FacetDataCache dataCache = getFacetData(reader);
+    	if (dataCache==null) return new String[0];
+    	int encoded=dataCache.orderArray.get(id);
 		if (encoded==0) {
 			return new Object[0];
 		}
@@ -171,7 +177,7 @@ public class CompactMultiValueFacetHandler extends FacetHandler implements Facet
 			while(encoded != 0)
 			{
 				if ((encoded & 0x00000001) != 0x0){
-					valList.add(_dataCache.valArray.getRawValue(count));
+					valList.add(dataCache.valArray.getRawValue(count));
 				}
 				count++;
 				encoded >>>= 1;
@@ -181,13 +187,20 @@ public class CompactMultiValueFacetHandler extends FacetHandler implements Facet
 	}
     
 	@Override
-	public FacetCountCollector getFacetCountCollector(BrowseSelection sel,
-			FacetSpec ospec) {
-		return new CompactMultiValueFacetCountCollector(sel,_dataCache,_name,ospec);
+	public FacetCountCollectorSource getFacetCountCollectorSource(final BrowseSelection sel,final FacetSpec ospec) {
+		return new FacetCountCollectorSource() {
+			
+			@Override
+			public FacetCountCollector getFacetCountCollector(BoboIndexReader reader,
+					int docBase) {
+				final FacetDataCache dataCache = CompactMultiValueFacetHandler.this.getFacetData(reader);
+				return new CompactMultiValueFacetCountCollector(_name,sel,dataCache,docBase,ospec);
+			}
+		};
 	}
 
 	@Override
-	public void load(BoboIndexReader reader) throws IOException {
+	public FacetDataCache load(BoboIndexReader reader) throws IOException {
 		int maxDoc = reader.maxDoc();
 
 		BigIntArray order = new BigIntArray(maxDoc);
@@ -263,34 +276,42 @@ public class CompactMultiValueFacetHandler extends FacetHandler implements Facet
 		
 		mterms.seal();
 
-		_dataCache=new FacetDataCache(order,mterms,freqList.toIntArray(),minIDList.toIntArray(),maxIDList.toIntArray(),TermCountSize.large);
+		return new FacetDataCache(order,mterms,freqList.toIntArray(),minIDList.toIntArray(),maxIDList.toIntArray(),TermCountSize.large);
 	}
 	
-	private class CompactMultiFacetScoreDocComparator implements ScoreDocComparator{
-        private final FacetDataCache _dataCache;
-        private CompactMultiFacetScoreDocComparator(FacetDataCache dataCache){
-          _dataCache = dataCache; 	
+	private static class CompactMultiFacetDocComparatorSource extends DocComparatorSource{
+		private final CompactMultiValueFacetHandler _facetHandler;
+        private CompactMultiFacetDocComparatorSource(CompactMultiValueFacetHandler facetHandler){
+        	_facetHandler = facetHandler;
         }
-        
-		public int compare(ScoreDoc doc1, ScoreDoc doc2) {
-			int encoded1=_dataCache.orderArray.get(doc1.doc);
-			int encoded2=_dataCache.orderArray.get(doc2.doc);
-			
-			return encoded1-encoded2;
-		}
 
-		public int sortType() {
-			return SortField.CUSTOM;
-		}
+		@Override
+		public DocComparator getComparator(final IndexReader reader, int docbase)
+				throws IOException {
+			if (!(reader instanceof BoboIndexReader))
+				throw new IllegalStateException("reader must be instance of "+BoboIndexReader.class);
+			final FacetDataCache dataCache = _facetHandler.getFacetData((BoboIndexReader)reader);
+			return new DocComparator(){
+				@Override
+				public int compare(ScoreDoc doc1, ScoreDoc doc2) {
+					int encoded1=dataCache.orderArray.get(doc1.doc);
+					int encoded2=dataCache.orderArray.get(doc2.doc);
+					return encoded1-encoded2;
+				}
 
-		public Comparable sortValue(ScoreDoc sdoc) {
-			return new StringArrayComparator(getFieldValues(sdoc.doc));
+				@Override
+				public Comparable value(ScoreDoc doc) {
+					return new StringArrayComparator(_facetHandler.getFieldValues((BoboIndexReader)reader,doc.doc));
+				}
+				
+			};
 		}	
 	}
 	
-	public BoboDocScorer getDocScorer(FacetTermScoringFunctionFactory scoringFunctionFactory,Map<String,Float> boostMap){
-		float[] boostList = BoboDocScorer.buildBoostList(_dataCache.valArray, boostMap);
-		return new CompactMultiValueDocScorer(_dataCache,scoringFunctionFactory,boostList);
+	public BoboDocScorer getDocScorer(BoboIndexReader reader,FacetTermScoringFunctionFactory scoringFunctionFactory,Map<String,Float> boostMap){
+		FacetDataCache dataCache = getFacetData(reader);
+		float[] boostList = BoboDocScorer.buildBoostList(dataCache.valArray, boostMap);
+		return new CompactMultiValueDocScorer(dataCache,scoringFunctionFactory,boostList);
 	}
 	
 	private static final class CompactMultiValueDocScorer extends BoboDocScorer{
@@ -353,12 +374,11 @@ public class CompactMultiValueFacetHandler extends FacetHandler implements Facet
 	  private boolean _aggregated = false;
 	  
 	  
-	  CompactMultiValueFacetCountCollector(BrowseSelection sel,
-	                                       FacetDataCache dataCache,
-	                                       String name,
+	  CompactMultiValueFacetCountCollector(String name,BrowseSelection sel,
+	                                       FacetDataCache dataCache,int docBase,
 	                                       FacetSpec ospec)
 	                                       {
-	    super(sel,dataCache,name,ospec);
+	    super(name,dataCache,docBase,sel,ospec);
 	    _array = _dataCache.orderArray;
 	  }
 	  
@@ -396,8 +416,14 @@ public class CompactMultiValueFacetHandler extends FacetHandler implements Facet
 	  {
 	    if(!_aggregated) aggregateCounts();
 	    return super.getFacet(value);  
-	  }
-	  
+    }
+
+    @Override
+    public int getFacetHitsCount(Object value) 
+    {
+	    if(!_aggregated) aggregateCounts();
+	    return super.getFacetHitsCount(value);  
+    }
       @Override
       public int[] getCountDistribution()
       {
@@ -437,5 +463,11 @@ public class CompactMultiValueFacetHandler extends FacetHandler implements Facet
         }
         _aggregated = true;
       }
-    }
+
+      @Override
+      public FacetIterator iterator() {
+          if(!_aggregated) aggregateCounts();
+    	  return super.iterator();
+      }
+	}
 }

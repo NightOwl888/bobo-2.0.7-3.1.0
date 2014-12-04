@@ -5,8 +5,9 @@ package com.browseengine.bobo.util;
 
 import java.util.Arrays;
 import java.util.Comparator;
-import java.util.List;
 
+import org.apache.lucene.search.DocIdSetIterator;
+import org.apache.lucene.util.BitVector;
 import org.apache.lucene.util.OpenBitSet;
 
 import com.browseengine.bobo.facets.data.TermValueList;
@@ -28,6 +29,12 @@ public final class BigNestedIntArray
   private static final int ROUNDING = 255;
   
   private static final int MISSING = Integer.MIN_VALUE;
+  private static final int[] MISSING_PAGE;
+  static
+  {
+    MISSING_PAGE = new int[MAX_SLOTS];
+    Arrays.fill(MISSING_PAGE, MISSING);
+  }
 
   private int _maxItems = MAX_ITEMS;
   private int[][] _list;
@@ -568,8 +575,22 @@ public final class BigNestedIntArray
 
   public final boolean contains(int id, int value)
   {
+    return contains(id, value, false);
+  }
+
+  public final boolean contains(int id, int value, boolean withMissing)
+  {
     final int[] page = _list[id >> PAGEID_SHIFT];
-    if(page == null) return false;
+    if(page == null) {
+      if (withMissing && value == 0)
+      {
+        return true;
+      }
+      else
+      {
+        return false;
+      }
+    }
     
     final int val = page[id & SLOTID_MASK];
     if (val >= 0)
@@ -583,6 +604,61 @@ public final class BigNestedIntArray
       while(idx < end)          
       {
         if(page[idx++] == value) return true;  
+      }
+    }
+    else if (withMissing)
+    {
+      return (value == 0);
+    }
+    return false;
+  }
+  
+  public final boolean contains(int id, BitVector values)
+  {
+    final int[] page = _list[id >> PAGEID_SHIFT];
+    if(page == null) return false;
+    
+    final int val = page[id & SLOTID_MASK];
+    if (val >= 0)
+    {
+      return (values.get(val));
+    }
+    else if(val != MISSING)
+    {
+      int idx = - (val >> VALIDX_SHIFT);// signed shift, remember this is a negative number
+      int end = idx + (val & COUNT_MASK);
+      while(idx < end)          
+      {
+        if(values.get(page[idx++])) return true;  
+      }
+    }
+    return false;
+  }
+  /**
+   * @param id - documentID
+   * @param startValueId - inclusive
+   * @param endValueId - exclusive
+   * @return
+   */
+  public final boolean containsValueInRange(int id, int startValueId, int endValueId)
+  {
+    final int[] page = _list[id >> PAGEID_SHIFT];
+    if(page == null) return false;
+    
+    final int val = page[id & SLOTID_MASK];
+    if (val >= 0)
+    {
+      return val >= startValueId && val < endValueId;
+    }
+    else if(val != MISSING)
+    {
+      int idx = - (val >> VALIDX_SHIFT);// signed shift, remember this is a negative number
+      int end = idx + (val & COUNT_MASK);
+      while(idx < end)          
+      {
+        
+        if(page[idx] >= startValueId && page[idx] < endValueId) return true;  
+        idx++;
       }
     }
     return false;
@@ -610,6 +686,165 @@ public final class BigNestedIntArray
     return false;
   }
   
+  public final int findValue(int value, int id, int maxID)
+  {
+    return findValue(value, id, maxID, false);
+  }
+
+  public final int findValue(int value, int id, int maxID, boolean withMissing)
+  {
+    int[] page = _list[id >> PAGEID_SHIFT];
+    if(page == null) page = MISSING_PAGE;
+    
+    while(true)
+    {
+      final int val = page[id & SLOTID_MASK];
+      if (val >= 0)
+      {
+        if(val == value) return id;
+      }
+      else if(val != MISSING)
+      {
+        int idx = - (val >> VALIDX_SHIFT);// signed shift, remember this is a negative number
+        int end = idx + (val & COUNT_MASK);
+        while(idx < end)          
+        {
+          if(page[idx++] == value) return id;  
+        }
+      }
+      else if (withMissing)
+      {
+        if(0 == value) return id;
+      }
+      if(id >= maxID) break;
+      
+      if(((++id) & SLOTID_MASK) == 0)
+      {
+        page = _list[id >> PAGEID_SHIFT];
+        if(page == null) page = MISSING_PAGE;
+      }
+    }
+    
+    return DocIdSetIterator.NO_MORE_DOCS;
+  }
+  
+  public final int findValues(BitVector values, int id, int maxID)
+  {
+    return findValues(values, id, maxID, false);
+  }
+
+  public final int findValues(BitVector values, int id, int maxID, boolean withMissing)
+  {
+    int[] page = _list[id >> PAGEID_SHIFT];
+    if(page == null) page = MISSING_PAGE;
+
+    while(true)
+    {
+      final int val = page[id & SLOTID_MASK];
+      if (val >= 0)
+      {
+        if(values.get(val)) return id;
+      }
+      else if(val != MISSING)
+      {
+        int idx = - (val >> VALIDX_SHIFT);// signed shift, remember this is a negative number
+        int end = idx + (val & COUNT_MASK);
+        while(idx < end)          
+        {
+          if(values.get(page[idx++])) return id;  
+        }
+      }
+      else if(withMissing)
+      {
+        if(values.get(0)) return id;
+      }
+      if(id >= maxID) break;
+      
+      if((++id & SLOTID_MASK) == 0)
+      {
+        page = _list[id >> PAGEID_SHIFT];
+        if(page == null) page = MISSING_PAGE;
+      }
+    }
+    
+    return DocIdSetIterator.NO_MORE_DOCS;
+  }
+  
+  public final int findValues(OpenBitSet values, int id, int maxID)
+  {
+    return findValues(values, id, maxID, false);
+  }
+
+  public final int findValues(OpenBitSet values, int id, int maxID, boolean withMissing)
+  {
+    int[] page = _list[id >> PAGEID_SHIFT];
+    if(page == null) page = MISSING_PAGE;
+
+    while(true)
+    {
+      final int val = page[id & SLOTID_MASK];
+      if (val >= 0)
+      {
+        if(values.fastGet(val)) return id;
+      }
+      else if(val != MISSING)
+      {
+        int idx = - (val >> VALIDX_SHIFT);// signed shift, remember this is a negative number
+        int end = idx + (val & COUNT_MASK);
+        while(idx < end)          
+        {
+          if(values.fastGet(page[idx++])) return id;  
+        }
+      }
+      else if(withMissing)
+      {
+        if(values.fastGet(0)) return id;
+      }
+      if(id >= maxID) break;
+      
+      if((++id & SLOTID_MASK) == 0)
+      {
+        page = _list[id >> PAGEID_SHIFT];
+        if(page == null) page = MISSING_PAGE;
+      }
+    }
+    
+    return DocIdSetIterator.NO_MORE_DOCS;
+  }
+ 
+  public final int findValuesInRange(int startIndex, int endIndex, int id, int maxID)
+  {
+    int[] page = _list[id >> PAGEID_SHIFT];
+    if(page == null) page = MISSING_PAGE;
+
+    while(true)
+    {
+      int val = page[id & SLOTID_MASK];
+      if (val >= 0)
+      {
+        if(val >= startIndex && val <= endIndex) return id;
+      }
+      else if(val != MISSING)
+      {
+        int idx = - (val >> VALIDX_SHIFT);// signed shift, remember this is a negative number
+        int end = idx + (val & COUNT_MASK);
+        while(idx < end)          
+        {
+          val = page[idx++];
+          if(val >= startIndex && val <= endIndex) return id;  
+        }
+      }      
+      if(id >= maxID) break;
+      
+      if((++id & SLOTID_MASK) == 0)
+      {
+        page = _list[id >> PAGEID_SHIFT];
+        if(page == null) page = MISSING_PAGE;
+      }
+    }
+    
+    return DocIdSetIterator.NO_MORE_DOCS;
+  }
   public final int count(final int id, final int[] count)
   {
     final int[] page = _list[id >> PAGEID_SHIFT];
@@ -639,6 +874,108 @@ public final class BigNestedIntArray
     return 0;
   }
   
+  public final void countNoReturn(final int id, final int[] count)
+  {
+    final int[] page = _list[id >> PAGEID_SHIFT];
+    if(page == null) {
+      count[0]++;
+      return;
+    }
+    
+    int val = page[id & SLOTID_MASK];
+    if(val >= 0)
+    {
+      count[val]++;
+      return;
+    }
+    else if(val != MISSING)
+    {
+      int idx = - (val >> VALIDX_SHIFT); // signed shift, remember val is a negative number
+      int cnt = (val & COUNT_MASK);
+      int end = idx + cnt;
+      while(idx < end)
+      {
+        count[page[idx++]]++;
+      }
+      return;
+    }
+    count[0]++;
+    return;
+  }
+  
+  public final void countNoReturnWithFilter(final int id, final int[] count, BitVector filter)
+  {
+    final int[] page = _list[id >> PAGEID_SHIFT];
+    if(page == null) {
+      count[0]++;
+      return;
+    }
+    
+    int val = page[id & SLOTID_MASK];
+    if(val >= 0)
+    {
+      if (filter.get(val))
+      {
+        count[val]++;
+      }
+      return;
+    }
+    else if(val != MISSING)
+    {
+      int idx = - (val >> VALIDX_SHIFT); // signed shift, remember val is a negative number
+      int cnt = (val & COUNT_MASK);
+      int end = idx + cnt;
+      while(idx < end)
+      {
+        int value = page[idx++];
+        if (filter.get(value))
+        {
+          count[value]++;
+        }
+      }
+      return;
+    }
+    count[0]++;
+    return;
+  }
+
+  public final void countNoReturnWithFilter(final int id, final int[] count, OpenBitSet filter)
+  {
+    final int[] page = _list[id >> PAGEID_SHIFT];
+    if(page == null) {
+      count[0]++;
+      return;
+    }
+    
+    int val = page[id & SLOTID_MASK];
+    if(val >= 0)
+    {
+      if (filter.fastGet(val))
+      {
+        count[val]++;
+      }
+      return;
+    }
+    else if(val != MISSING)
+    {
+      int idx = - (val >> VALIDX_SHIFT); // signed shift, remember val is a negative number
+      int cnt = (val & COUNT_MASK);
+      int end = idx + cnt;
+      while(idx < end)
+      {
+        int value = page[idx++];
+        if (filter.fastGet(value))
+        {
+          count[value]++;
+        }
+      }
+      return;
+    }
+    count[0]++;
+    return;
+  }
+
+
   /**
    * returns the number data items for id
    * @param id

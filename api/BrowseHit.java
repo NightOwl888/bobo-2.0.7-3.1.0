@@ -8,6 +8,7 @@ import java.util.Map;
 import java.util.Set;
 
 import org.apache.lucene.document.Document;
+import org.apache.lucene.search.Explanation;
 
 /**
  * A hit from a browse
@@ -16,6 +17,18 @@ public class BrowseHit
 	implements Serializable
 {
 	private static final long serialVersionUID = 1L;
+	
+	public static class TermFrequencyVector implements Serializable{
+
+	  private static final long serialVersionUID = 1L;
+	  public final String[] terms;
+	  public final int[] freqs;
+	  
+	  public TermFrequencyVector(String[] terms,int[] freqs){
+	    this.terms = terms;
+	    this.freqs = freqs;
+	  }
+	}
 
 	/**
 	 * Get the score
@@ -39,6 +52,17 @@ public class BrowseHit
 	}
 	
 	/**
+	 * Get the raw field values
+	 * @param field field name
+	 * @return field value array
+	 * @see #getRawField(String)
+	 */
+	public Object[] getRawFields(String field)
+	{
+		return _rawFieldValues != null ? _rawFieldValues.get(field) : null;
+	}
+	
+	/**
 	 * Get the field value
 	 * @param field field name
 	 * @return field value
@@ -56,23 +80,125 @@ public class BrowseHit
 			return null;
 		}
 	}
+	
+	/**
+	 * Get the raw field value
+	 * @param field field name
+	 * @return raw field value
+	 * @see #getRawFields(String)
+	 */
+	public Object getRawField(String field)
+	{
+		Object[] fields=getRawFields(field);
+		if (fields!=null && fields.length > 0)
+		{
+			return fields[0];
+		}
+		else
+		{
+			return null;
+		}
+	}
 	                       
 
 	private float score;
 	private int docid;
 	
 	private Map<String,String[]> _fieldValues;
-	private Map<String,Comparable<?>> _comparableMap = new HashMap<String,Comparable<?>>();
+	private Map<String,Object[]> _rawFieldValues;
+	private transient Comparable<?> _comparable;
 	private Document _storedFields;
+  private int _groupPosition; // the position of the _groupField inside groupBy request.
+  private String _groupField;
+  private String _groupValue;
+  private Object _rawGroupValue;
+  private int _groupHitsCount;
+  private BrowseHit[] _groupHits;
+	private Explanation _explanation;
 	
-	public void addComparable(String field,Comparable<?> comparable)
-	{
-	  _comparableMap.put(field, comparable);
+	private Map<String,TermFrequencyVector> _termFreqMap = new HashMap<String,TermFrequencyVector>();
+	
+	public Map<String,TermFrequencyVector> getTermFreqMap(){
+	  return _termFreqMap;
 	}
 	
-	public Comparable<?> getComparable(String field)
+	public BrowseHit setTermFreqMap(Map<String, TermFrequencyVector> termFreqMap){
+	  _termFreqMap = termFreqMap;
+    return this;
+	}
+
+    public int getGroupPosition() {
+      return _groupPosition;
+    }
+
+    public BrowseHit setGroupPosition(int pos) {
+      _groupPosition = pos;
+      return this;
+    }
+
+    public String getGroupField() {
+      return _groupField;
+    }
+
+    public BrowseHit setGroupField(String field) {
+      _groupField = field;
+      return this;
+    }
+
+    public String getGroupValue() {
+      return _groupValue;
+    }
+
+    public BrowseHit setGroupValue(String group) {
+      _groupValue = group;
+      return this;
+    }
+
+    public Object getRawGroupValue() {
+      return _rawGroupValue;
+    }
+
+    public BrowseHit setRawGroupValue(Object group) {
+      _rawGroupValue = group;
+      return this;
+    }
+
+    public int getGroupHitsCount() {
+      return _groupHitsCount;
+    }
+
+  public BrowseHit setGroupHitsCount(int count) {
+    _groupHitsCount = count;
+    return this;
+  }
+
+  public BrowseHit[] getGroupHits() {
+    return _groupHits;
+  }
+
+  public BrowseHit setGroupHits(BrowseHit[] hits) {
+    _groupHits = hits;
+    return this;
+  }
+	
+	public Explanation getExplanation() {
+		return _explanation;
+	}
+
+	public BrowseHit setExplanation(Explanation explanation) {
+		_explanation = explanation;
+    return this;
+	}
+
+	public BrowseHit setComparable(Comparable<?> comparable)
 	{
-	  return _comparableMap.get(field);
+	  _comparable = comparable;
+    return this;
+	}
+	
+	public Comparable<?> getComparable()
+	{
+	  return _comparable;
 	}
 	
 	/**
@@ -86,11 +212,13 @@ public class BrowseHit
 	
 	/**
 	 * Sets the internal document id
-	 * @param docid document id
-	 * @see #getDocid()
+	 *
+   * @param docid document id
+   * @see #getDocid()
 	 */
-	public void setDocid(int docid) {
+	public BrowseHit setDocid(int docid) {
 		this.docid = docid;
+    return this;
 	}
 	
 	/**
@@ -103,25 +231,50 @@ public class BrowseHit
 	}
 	
 	/**
-	 * Sets the field value map
-	 * @param fieldValues field value map
-	 * @see #getFieldValues()
+	 * Sets the raw field value map
+	 *
+   * @param rawFieldValues raw field value map
+   * @see #getRawFieldValues()
 	 */
-	public void setFieldValues(Map<String,String[]> fieldValues) {
+	public BrowseHit setRawFieldValues(Map<String, Object[]> rawFieldValues) {
+		_rawFieldValues = rawFieldValues;
+    return this;
+	}
+	
+	/**
+	 * Gets the raw field values
+	 * @return raw field value map
+	 * @see #setRawFieldValues(Map)
+	 */
+	public Map<String,Object[]> getRawFieldValues() {
+		return _rawFieldValues;
+	}
+	
+	/**
+	 * Sets the field value map
+	 *
+   * @param fieldValues field value map
+   * @see #getFieldValues()
+	 */
+	public BrowseHit setFieldValues(Map<String, String[]> fieldValues) {
 		_fieldValues = fieldValues;
+    return this;
 	}
 	
 	/**
 	 * Sets the score
-	 * @param score score
-	 * @see #getScore()
+	 *
+   * @param score score
+   * @see #getScore()
 	 */
-	public void setScore(float score) {
+	public BrowseHit setScore(float score) {
 		this.score = score;
+    return this;
 	}
 	
-	public void setStoredFields(Document doc){
+	public BrowseHit setStoredFields(Document doc){
 		_storedFields = doc;
+    return this;
 	}
 	
 	public Document getStoredFields(){
@@ -137,7 +290,8 @@ public class BrowseHit
 	      Map.Entry<String, String[]> e = iterator.next();
 	      buffer.append(e.getKey());
 	      buffer.append(":");
-	      buffer.append(Arrays.asList(e.getValue()));
+	      String[] vals = e.getValue();
+	      buffer.append(vals == null ? null: Arrays.toString(vals));
 	      if (iterator.hasNext()) buffer.append(", ");
 	    }
 	    return buffer.toString();

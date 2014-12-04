@@ -3,7 +3,10 @@ package com.browseengine.bobo.api;
 import java.io.Serializable;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
+
+import com.browseengine.bobo.facets.impl.PathFacetIterator;
 
 public class MappedFacetAccessible implements FacetAccessible, Serializable {
 
@@ -27,8 +30,26 @@ public class MappedFacetAccessible implements FacetAccessible, Serializable {
 		return _facetMap.get(value);
 	}
 
+  public int getFacetHitsCount(Object value)
+  {
+    BrowseFacet facet = _facetMap.get(value);
+    if (facet != null)
+      return facet.getHitCount();
+    return 0;
+  }
+
 	public List<BrowseFacet> getFacets() {
 		return Arrays.asList(_facets);
+	}
+
+	public void close()
+	{
+		// TODO Auto-generated method stub
+
+	}
+
+	public FacetIterator iterator() {
+		return new PathFacetIterator(Arrays.asList(_facets));
 	}
 
 }

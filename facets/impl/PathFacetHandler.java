@@ -4,54 +4,54 @@ import it.unimi.dsi.fastutil.ints.IntOpenHashSet;
 import it.unimi.dsi.fastutil.ints.IntSet;
 
 import java.io.IOException;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Properties;
 
-import org.apache.lucene.search.ScoreDocComparator;
-
 import com.browseengine.bobo.api.BoboIndexReader;
-import com.browseengine.bobo.api.BrowseFacet;
 import com.browseengine.bobo.api.BrowseSelection;
 import com.browseengine.bobo.api.FacetSpec;
 import com.browseengine.bobo.facets.FacetCountCollector;
+import com.browseengine.bobo.facets.FacetCountCollectorSource;
 import com.browseengine.bobo.facets.FacetHandler;
-import com.browseengine.bobo.facets.FacetHandlerFactory;
 import com.browseengine.bobo.facets.data.FacetDataCache;
+import com.browseengine.bobo.facets.data.MultiValueFacetDataCache;
 import com.browseengine.bobo.facets.data.TermListFactory;
 import com.browseengine.bobo.facets.filter.EmptyFilter;
 import com.browseengine.bobo.facets.filter.FacetOrFilter;
+import com.browseengine.bobo.facets.filter.FacetValueConverter;
+import com.browseengine.bobo.facets.filter.MultiValueORFacetFilter;
 import com.browseengine.bobo.facets.filter.RandomAccessFilter;
 import com.browseengine.bobo.facets.filter.RandomAccessNotFilter;
-import com.browseengine.bobo.util.BigSegmentedArray;
+import com.browseengine.bobo.sort.DocComparatorSource;
 
-public class PathFacetHandler extends FacetHandler implements FacetHandlerFactory 
+public class PathFacetHandler extends FacetHandler<FacetDataCache> 
 {
 	private static final String DEFAULT_SEP = "/";
 	
 	public static final String SEL_PROP_NAME_STRICT="strict";
     public static final String SEL_PROP_NAME_DEPTH="depth";
+    
+    private final boolean _multiValue;
 	
-	private FacetDataCache _dataCache;
 	private final TermListFactory _termListFactory;
 	private String _separator;
+	private final String _indexedName;
 	
-	public PathFacetHandler(String name)
+	public PathFacetHandler(String name){
+		this(name,false);
+	}
+	
+	public PathFacetHandler(String name,boolean multiValue){
+		this(name,name,multiValue);
+	}
+	
+	public PathFacetHandler(String name,String indexedName,boolean multiValue)
 	{
 		super(name);
-		_dataCache=null;
+		_indexedName = indexedName;
+		_multiValue = multiValue;
 		_termListFactory=TermListFactory.StringListFactory;
 		_separator=DEFAULT_SEP;
-	}
-	
-	public FacetHandler newInstance()
-	{
-	  return new PathFacetHandler(getName());
-	}
-	
-	public final FacetDataCache getDataCache()
-	{
-		return _dataCache;
 	}
 	
 	/**
@@ -87,6 +87,15 @@ public class PathFacetHandler extends FacetHandler implements FacetHandlerFactor
     	}
     }
     
+
+	@Override
+	public int getNumItems(BoboIndexReader reader, int id) {
+		FacetDataCache data = getFacetData(reader);
+		if (data==null) return 0;
+		return data.getNumItems(id);
+	}
+	
+    
     /**
      * Gets the depth.  Used if the field is of type <b><i>path</i></b>.
      * @return depth
@@ -103,19 +112,29 @@ public class PathFacetHandler extends FacetHandler implements FacetHandlerFactor
     }
     
 	@Override
-	public ScoreDocComparator getScoreDocComparator()  
+	public DocComparatorSource getDocComparatorSource()  
 	{
-		return _dataCache.getScoreDocComparator();
-	}
-	@Override
-	public String[] getFieldValues(int id) 
-	{
-		return new String[]{_dataCache.valArray.get(_dataCache.orderArray.get(id))};
+		return new FacetDataCache.FacetDocComparatorSource(this);
 	}
 	
 	@Override
-	public Object[] getRawFieldValues(int id){
-		return getFieldValues(id);
+	public String[] getFieldValues(BoboIndexReader reader,int id) 
+	{
+		FacetDataCache dataCache = getFacetData(reader);
+		if (dataCache==null) return new String[0];
+		if (_multiValue){
+		  return ((MultiValueFacetDataCache)dataCache)._nestedArray.getTranslatedData(id, dataCache.valArray);	
+		}
+		else{
+		  	
+		  return new String[]{dataCache.valArray.get(dataCache.orderArray.get(id))};
+		}
+
+	}
+	 
+	@Override
+	public Object[] getRawFieldValues(BoboIndexReader reader,int id){
+		return getFieldValues(reader,id);
 	}
 
 	
@@ -129,70 +148,85 @@ public class PathFacetHandler extends FacetHandler implements FacetHandlerFactor
 		return _separator;
 	}
 	
-	private int getPathDepth(String path)
+	private static int getPathDepth(String path,String separator)
 	{
-		return path.split(String.valueOf(_separator)).length;
+		return path.split(String.valueOf(separator)).length;
 	}
 	
-	private void getFilters(IntSet intSet,String[] vals, int depth, boolean strict)
-    {
-	 for (String val : vals)
-	 {
-	   getFilters(intSet,val,depth,strict);
-	 }
-    }
 	
-	private void getFilters(IntSet intSet,String val, int depth, boolean strict)
-	{
-	    List<String> termList = _dataCache.valArray;
-		int index = termList.indexOf(val);
-
-		int startDepth = getPathDepth(val);
-		
-		if (index < 0)
-		{
-			int nextIndex = -(index + 1);
-			if (nextIndex == termList.size())
-			{
-				return;
-			}	
-			index = nextIndex;
+	
+	private static class PathValueConverter implements FacetValueConverter{
+		private final boolean _strict;
+		private final String _sep;
+		private final int _depth;
+		PathValueConverter(int depth,boolean strict,String sep){
+			_strict = strict;
+			_sep = sep;
+			_depth = depth;
 		}
 		
-
-		for (int i=index; i<termList.size(); ++i)
+		private void getFilters(FacetDataCache dataCache,IntSet intSet,String[] vals, int depth, boolean strict)
+	    {
+		 for (String val : vals)
+		 {
+		   getFilters(dataCache,intSet,val,depth,strict);
+		 }
+	    }
+		
+		private void getFilters(FacetDataCache dataCache,IntSet intSet,String val, int depth, boolean strict)
 		{
-			String path = termList.get(i);
-			if (path.startsWith(val))
+		    List<String> termList = dataCache.valArray;
+			int index = termList.indexOf(val);
+
+			int startDepth = getPathDepth(val,_sep);
+			
+			if (index < 0)
 			{
-				if (!strict || getPathDepth(path) - startDepth == depth)
+				int nextIndex = -(index + 1);
+				if (nextIndex == termList.size())
 				{
-				  intSet.add(i);
-				}
+					return;
+				}	
+				index = nextIndex;
 			}
-			else
+			
+
+			for (int i=index; i<termList.size(); ++i)
 			{
-				break;
-			}	
+				String path = termList.get(i);
+				if (path.startsWith(val))
+				{
+					if (!strict || getPathDepth(path,_sep) - startDepth == depth)
+					{
+					  intSet.add(i);
+					}
+				}
+				else
+				{
+					break;
+				}	
+			}
 		}
+		
+		public int[] convert(FacetDataCache dataCache, String[] vals) {
+			IntSet intSet = new IntOpenHashSet();
+		    getFilters(dataCache,intSet,vals, _depth, _strict);
+		    return intSet.toIntArray();
+		}
+		
 	}
+	
+	
 	
   @Override
   public RandomAccessFilter buildRandomAccessFilter(String value,Properties props) throws IOException
   {
-    int depth = getDepth(props);
-    boolean strict = isStrict(props);
-    IntSet intSet = new IntOpenHashSet();
-    getFilters(intSet,value, depth, strict);
-    if (intSet.size()>0)
-    {
-      int[] indexes = intSet.toIntArray();
-      return new FacetOrFilter(_dataCache,indexes);
-    }
-    else
-    {
-      return null;
-    }
+	  int depth = getDepth(props);
+	  boolean strict = isStrict(props);
+	  PathValueConverter valConverter = new PathValueConverter(depth,strict,_separator);
+	  String[] vals = new String[]{value};
+	  
+	  return _multiValue ? new MultiValueORFacetFilter(this,vals,valConverter,false) : new FacetOrFilter(this,vals,false,valConverter);
   }
   
   @Override
@@ -221,13 +255,14 @@ public class PathFacetHandler extends FacetHandler implements FacetHandlerFactor
   {
     if (vals.length > 1)
     {
-      int depth = getDepth(prop);
-      boolean strict = isStrict(prop);
-      IntSet intSet = new IntOpenHashSet();
-      getFilters(intSet,vals,depth,strict);
-      if (intSet.size()>0)
+      
+      
+      if (vals.length>0)
       {
-        return new FacetOrFilter(_dataCache,intSet.toIntArray(),isNot);
+    	int depth = getDepth(prop);
+        boolean strict = isStrict(prop);
+    	PathValueConverter valConverter = new PathValueConverter(depth,strict,_separator);
+		return _multiValue ? new MultiValueORFacetFilter(this,vals,valConverter,isNot) : new FacetOrFilter(this,vals,isNot,valConverter);
       }
       else
       {
@@ -252,198 +287,37 @@ public class PathFacetHandler extends FacetHandler implements FacetHandlerFactor
       return f;
     }
   }
-	
+  
 	@Override
-	public FacetCountCollector getFacetCountCollector(BrowseSelection sel, FacetSpec ospec) 
+	public FacetCountCollectorSource getFacetCountCollectorSource(final BrowseSelection sel,final FacetSpec ospec) 
 	{
-		return new PathFacetCountCollector(_name,_separator,sel,ospec,_dataCache);
+		return new FacetCountCollectorSource() {
+			
+			@Override
+			public FacetCountCollector getFacetCountCollector(BoboIndexReader reader,
+					int docBase) {
+				FacetDataCache dataCache = PathFacetHandler.this.getFacetData(reader);
+				if (_multiValue){
+					return new MultiValuedPathFacetCountCollector(_name, _separator, sel, ospec,dataCache);
+				}
+				else{
+					return new PathFacetCountCollector(_name,_separator,sel,ospec,dataCache);
+				}
+			}
+		};
 	}
 
 	@Override
-	public void load(BoboIndexReader reader) throws IOException {
-	    if (_dataCache == null)
-	    {
-	      _dataCache = new FacetDataCache();
-	    }
-		_dataCache.load(_name, reader, _termListFactory);
+	public FacetDataCache load(BoboIndexReader reader) throws IOException {
+       if (!_multiValue){
+	      FacetDataCache dataCache = new FacetDataCache();
+	      dataCache.load(_indexedName, reader, _termListFactory);
+	      return dataCache;
+       }
+       else{
+    	   MultiValueFacetDataCache dataCache = new MultiValueFacetDataCache();
+    	   dataCache.load(_indexedName, reader, _termListFactory);
+ 	      return dataCache;
+       }
 	}
-	
-	private final static class PathFacetCountCollector implements FacetCountCollector
-	{
-		private final BrowseSelection _sel;
-		private final FacetSpec _ospec;
-		private int[] _count;
-		private final String _name;
-		private final String _sep;
-		private final BigSegmentedArray _orderArray;
-		private final FacetDataCache _dataCache;
-		
-		PathFacetCountCollector(String name,String sep,BrowseSelection sel,FacetSpec ospec,FacetDataCache dataCache)
-		{
-			_sel = sel;
-			_ospec=ospec;
-			_name = name;
-            _dataCache = dataCache;
-            _sep = sep;
-			_count=new int[_dataCache.freqs.length];
-			_orderArray = _dataCache.orderArray;
-		}
-		
-		public int[] getCountDistribution()
-		{
-		  return _count;
-		}
-		
-		public String getName()
-		{
-			return _name;
-		}
-		
-		public final void collect(int docid) {
-			_count[_orderArray.get(docid)]++;
-		}
-		
-		public final void collectAll()
-		{
-		    _count = _dataCache.freqs; 
-		}
-		public BrowseFacet getFacet(String value)
-		{
-		  return null;	
-		}
-		
-		private List<BrowseFacet> getFacetsForPath(String selectedPath,int depth,boolean strict,int minCount)
-		{
-			LinkedList<BrowseFacet> list=new LinkedList<BrowseFacet>();
-			
-			String[] startParts=null;
-			int startDepth=0;
-			
-			if (selectedPath!=null && selectedPath.length()>0){					
-				startParts=selectedPath.split(_sep);
-				startDepth=startParts.length;		
-				if (!selectedPath.endsWith(_sep)){
-					selectedPath+=_sep;
-				}
-			}	
-			
-			String currentPath=null;
-			int currentCount=0;
-			
-			int wantedDepth=startDepth+depth;
-			
-			int index=0;
-			if (selectedPath!=null && selectedPath.length()>0){		
-				index=_dataCache.valArray.indexOf(selectedPath);
-				if (index<0)
-				{
-					index=-(index + 1);
-				}
-			}
-			
-			for (int i=index;i<_count.length;++i){
-				if (_count[i] >= minCount){
-					String path=_dataCache.valArray.get(i);
-					//if (path==null || path.equals(selectedPath)) continue;						
-					
-					int subCount=_count[i];
-				
-					String[] pathParts=path.split(_sep);
-					
-					int pathDepth=pathParts.length;
-								
-					if ((startDepth==0) || (startDepth>0 && path.startsWith(selectedPath))){
-							StringBuffer buf=new StringBuffer();
-							int minDepth=Math.min(wantedDepth, pathDepth);
-							for(int k=0;k<minDepth;++k){
-								buf.append(pathParts[k]);
-								if (!pathParts[k].endsWith(_sep)){
-									if (pathDepth!=wantedDepth || k<(wantedDepth-1))
-										buf.append(_sep);
-								}
-							}
-							String wantedPath=buf.toString();
-							if (currentPath==null){
-								currentPath=wantedPath;
-								currentCount=subCount;
-							}
-							else if (wantedPath.equals(currentPath)){
-								if (!strict){
-									currentCount+=subCount;
-								}
-							}
-							else{	
-								boolean directNode=false;
-								
-								if (wantedPath.endsWith(_sep)){
-									if (currentPath.equals(wantedPath.substring(0, wantedPath.length()-1))){
-										directNode=true;
-									}
-								}
-								
-								if (strict){
-									if (directNode){
-										currentCount+=subCount;
-									}
-									else{
-										BrowseFacet ch=new BrowseFacet(currentPath,currentCount);
-										list.add(ch);
-										currentPath=wantedPath;
-										currentCount=subCount;
-									}
-								}
-								else{
-									if (!directNode){
-										BrowseFacet ch=new BrowseFacet(currentPath,currentCount);
-										list.add(ch);
-										currentPath=wantedPath;
-										currentCount=subCount;
-									}
-									else{
-										currentCount+=subCount;
-									}
-								}
-							}
-					}
-					else{
-						break;
-					}
-				}
-			}
-			
-			if (currentPath!=null && currentCount>0){
-				list.add(new BrowseFacet(currentPath,currentCount));
-			}
-			
-			return list;
-		}
-
-		public List<BrowseFacet> getFacets() {
-			int minCount=_ospec.getMinHitCount();
-			
-			Properties props = _sel == null ? null : _sel.getSelectionProperties();
-			int depth = PathFacetHandler.getDepth(props);
-			boolean strict = PathFacetHandler.isStrict(props);
-			
-			String[] paths= _sel == null ? null : _sel.getValues();
-			if (paths==null || paths.length == 0)
-			{
-				return getFacetsForPath(null, depth, strict, minCount);
-			}
-			
-
-			LinkedList<BrowseFacet> finalList=new LinkedList<BrowseFacet>();
-			for (String path : paths)
-			{
-				List<BrowseFacet> subList=getFacetsForPath(path, depth, strict, minCount);
-				if (subList.size() > 0)
-				{
-				  finalList.addAll(subList);
-				}
-			}
-			return finalList;
-		}
-		
-	}
-
 }

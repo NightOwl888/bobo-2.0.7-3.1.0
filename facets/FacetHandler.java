@@ -1,44 +1,43 @@
 package com.browseengine.bobo.facets;
 
 import java.io.IOException;
+import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
-import java.util.TreeMap;
-
-import org.apache.lucene.search.ScoreDocComparator;
 
 import com.browseengine.bobo.api.BoboIndexReader;
-import com.browseengine.bobo.api.BrowseFacet;
 import com.browseengine.bobo.api.BrowseSelection;
+import com.browseengine.bobo.api.BrowseSelection.ValueOperation;
 import com.browseengine.bobo.api.FacetAccessible;
 import com.browseengine.bobo.api.FacetSpec;
-import com.browseengine.bobo.api.BrowseSelection.ValueOperation;
-import com.browseengine.bobo.api.FacetSpec.FacetSortSpec;
 import com.browseengine.bobo.facets.filter.EmptyFilter;
 import com.browseengine.bobo.facets.filter.RandomAccessAndFilter;
 import com.browseengine.bobo.facets.filter.RandomAccessFilter;
 import com.browseengine.bobo.facets.filter.RandomAccessNotFilter;
 import com.browseengine.bobo.facets.filter.RandomAccessOrFilter;
+import com.browseengine.bobo.sort.DocComparatorSource;
 
 /**
  * FacetHandler definition
  *
  */
-public abstract class FacetHandler implements Cloneable 
+public abstract class FacetHandler<D>
 {
+	public static class FacetDataNone implements Serializable{
+		private static final long serialVersionUID = 1L;
+		public static FacetDataNone instance = new FacetDataNone();
+		private FacetDataNone(){}
+	}
+	
 	protected final String _name;
 	private final Set<String> _dependsOn;
-	private final Map<String,FacetHandler> _dependedFacetHandlers;
+	private final Map<String,FacetHandler<?>> _dependedFacetHandlers;
 	private TermCountSize _termCountSize;
 	
 	public static enum TermCountSize{
@@ -60,16 +59,18 @@ public abstract class FacetHandler implements Cloneable
 		{
 			_dependsOn.addAll(dependsOn);
 		}
-		_dependedFacetHandlers = new HashMap<String,FacetHandler>();
+		_dependedFacetHandlers = new HashMap<String,FacetHandler<?>>();
 		_termCountSize = TermCountSize.large;
 	}
 	
-	public void setTermCountSize(String termCountSize){
+	public FacetHandler<D> setTermCountSize(String termCountSize){
 		setTermCountSize(TermCountSize.valueOf(termCountSize.toLowerCase()));
+    return this;
 	}
 	
-	public void setTermCountSize(TermCountSize termCountSize){
+	public FacetHandler<D> setTermCountSize(TermCountSize termCountSize){
 		_termCountSize = termCountSize;
+    return this;
 	}
 	
 	public TermCountSize getTermCountSize(){
@@ -107,7 +108,7 @@ public abstract class FacetHandler implements Cloneable
 	 * Adds a list of depended facet handlers
 	 * @param facetHandler depended facet handler
 	 */
-	public final void putDependedFacetHandler(FacetHandler facetHandler)
+	public final void putDependedFacetHandler(FacetHandler<?> facetHandler)
 	{
 		_dependedFacetHandlers.put(facetHandler._name, facetHandler);
 	}
@@ -117,7 +118,7 @@ public abstract class FacetHandler implements Cloneable
 	 * @param name facet handler name
 	 * @return facet handler instance 
 	 */
-	public final FacetHandler getDependedFacetHandler(String name)
+	public final FacetHandler<?> getDependedFacetHandler(String name)
 	{
 		return _dependedFacetHandlers.get(name);
 	}
@@ -127,114 +128,33 @@ public abstract class FacetHandler implements Cloneable
 	 * @param reader reader
 	 * @throws IOException
 	 */
-	abstract public void load(BoboIndexReader reader) throws IOException;
-	
-	private static class CombinedFacetAccessible implements FacetAccessible
-	{
-		private final List<FacetAccessible> _list;
-		private final FacetSpec _fspec;
-		CombinedFacetAccessible(FacetSpec fspec,List<FacetAccessible> list)
-		{
-			_list = list;
-			_fspec = fspec;
-		}
-		
-		public String toString() {
-			return "_list:"+_list+" _fspec:"+_fspec;
-		}
-		
-		public BrowseFacet getFacet(String value) {
-			int sum=-1;
-			String foundValue=null;
-			if (_list!=null)
-			{
-				for (FacetAccessible facetAccessor : _list)
-				{
-					BrowseFacet facet = facetAccessor.getFacet(value);
-					if (facet!=null)
-					{
-					  foundValue = facet.getValue();
-						if (sum==-1) sum=facet.getHitCount();
-						else sum+=facet.getHitCount();
-					}
-				}
-			}
-			if (sum==-1) return null;
-			return new BrowseFacet(foundValue,sum);
-		}
+	abstract public D load(BoboIndexReader reader) throws IOException;
 
-		public List<BrowseFacet> getFacets() {
-			Map<String,BrowseFacet> facetMap;
-			if (FacetSortSpec.OrderValueAsc.equals(_fspec.getOrderBy()))
-			{
-				facetMap= new TreeMap<String,BrowseFacet>();
-			}
-			else
-			{
-				facetMap = new HashMap<String,BrowseFacet>();
-			}
-			
-			for (FacetAccessible facetAccessor : _list)
-			{
-				Iterator<BrowseFacet> iter = facetAccessor.getFacets().iterator();
-				if (facetMap.size() == 0)
-				{
-					while(iter.hasNext())
-					{
-						BrowseFacet facet = iter.next();
-						facetMap.put(facet.getValue(),facet);
-					}
-				}
-				else
-				{
-					while(iter.hasNext())
-					{
-						BrowseFacet facet = iter.next();
-						BrowseFacet existing = facetMap.get(facet.getValue());
-						if (existing == null)
-						{
-							facetMap.put(facet.getValue(), facet);
-						}
-						else
-						{
-							existing.setHitCount(existing.getHitCount() + facet.getHitCount());
-						}
-					}
-				}
-			}
-			
-			List<BrowseFacet> list = new LinkedList<BrowseFacet>(facetMap.values());
-			
-			if (FacetSortSpec.OrderHitsDesc.equals(_fspec.getOrderBy()))
-			{
-				Collections.sort(list, new Comparator<BrowseFacet>(){
-
-					public int compare(BrowseFacet f1, BrowseFacet f2) {
-						int val=f2.getHitCount() - f1.getHitCount();
-						if (val==0)
-						{
-							val=-(f1.getValue().compareTo(f2.getValue()));
-						}
-						return val;
-					}
-					
-				});
-			}
-			return list;
-		}
-		
-	}
-	
 	public FacetAccessible merge(FacetSpec fspec, List<FacetAccessible> facetList)
 	{
 		return new CombinedFacetAccessible(fspec,facetList);
 	}
 	
-	public void load(BoboIndexReader reader, BoboIndexReader.WorkArea workArea) throws IOException
-	{
-	  load(reader);
+	@SuppressWarnings("unchecked")
+	public D getFacetData(BoboIndexReader reader){
+		return (D)reader.getFacetData(_name);
 	}
 	
+	public D load(BoboIndexReader reader, BoboIndexReader.WorkArea workArea) throws IOException
+	{
+	  return load(reader);
+	}
+	
+	public void loadFacetData(BoboIndexReader reader, BoboIndexReader.WorkArea workArea) throws IOException
+	{
+	  reader.putFacetData(_name, load(reader, workArea));
+	}
+	
+	public void loadFacetData(BoboIndexReader reader) throws IOException
+	{
+	  reader.putFacetData(_name, load(reader));
+	}
+
 	/**
 	 * Gets a filter from a given selection
 	 * @param sel selection
@@ -242,7 +162,7 @@ public abstract class FacetHandler implements Cloneable
 	 * @throws IOException 
 	 * @throws IOException
 	 */
-	public final RandomAccessFilter buildFilter(BrowseSelection sel) throws IOException
+	public RandomAccessFilter buildFilter(BrowseSelection sel) throws IOException
 	{
       String[] selections = sel.getValues();
       String[] notSelections = sel.getNotValues();
@@ -288,26 +208,22 @@ public abstract class FacetHandler implements Cloneable
 	
 	abstract public RandomAccessFilter buildRandomAccessFilter(String value,Properties selectionProperty) throws IOException;
 	
-	public RandomAccessFilter buildRandomAccessAndFilter(String[] vals,Properties prop) throws IOException
-	{
-	  ArrayList<RandomAccessFilter> filterList = new ArrayList<RandomAccessFilter>(vals.length);
-	  
-	  for (String val : vals)
-	  {
-	    RandomAccessFilter f = buildRandomAccessFilter(val, prop);
-	    if(f != null) 
-	    {
-	      filterList.add(f); 
-	    }
-	    else
-	    {
-	      // there is no hit in this AND filter because this value has no hit
-	      return null;
-	    }
-	  }
-	  if (filterList.size() == 0) return null;
-	  return new RandomAccessAndFilter(filterList);
-	}
+  public RandomAccessFilter buildRandomAccessAndFilter(String[] vals, Properties prop) throws IOException {
+    ArrayList<RandomAccessFilter> filterList = new ArrayList<RandomAccessFilter>(vals.length);
+
+    for (String val : vals) {
+      RandomAccessFilter f = buildRandomAccessFilter(val, prop);
+      if (f != null) {
+        filterList.add(f);
+      } else {
+        return EmptyFilter.getInstance();
+      }
+    }
+
+    if (filterList.size() == 1)
+      return filterList.get(0);
+    return new RandomAccessAndFilter(filterList);
+  }
 	
 	public RandomAccessFilter buildRandomAccessOrFilter(String[] vals,Properties prop,boolean isNot) throws IOException
     {
@@ -345,34 +261,51 @@ public abstract class FacetHandler implements Cloneable
 	 * @param fspec facetSpec
 	 * @return a FacetCountCollector
 	 */
-	abstract public FacetCountCollector getFacetCountCollector(BrowseSelection sel, FacetSpec fspec);
+	abstract public FacetCountCollectorSource getFacetCountCollectorSource(BrowseSelection sel, FacetSpec fspec);
+
+  /**
+   * Override this method if your facet handler have a better group mode like the SimpleFacetHandler.
+   */
+	public FacetCountCollectorSource getFacetCountCollectorSource(BrowseSelection sel,
+                                                                FacetSpec ospec,
+                                                                boolean groupMode) {
+    return getFacetCountCollectorSource(sel, ospec);
+  }
 	
 	/**
 	 * Gets the field value
 	 * @param id doc
+	 * @param reader index reader
 	 * @return array of field values
-	 * @see #getFieldValue(int)
+	 * @see #getFieldValue(BoboIndexReader,int)
 	 */
-	abstract public String[] getFieldValues(int id);
+	abstract public String[] getFieldValues(BoboIndexReader reader,int id);
 	
-	abstract public Object[] getRawFieldValues(int id);
+	public int getNumItems(BoboIndexReader reader,int id){
+	  throw new UnsupportedOperationException("getNumItems is not supported for this facet handler: "+getClass().getName());
+	}
+	
+	public Object[] getRawFieldValues(BoboIndexReader reader,int id){
+		return getFieldValues(reader, id);
+	}
 	
 	/**
 	 * Gets a single field value
 	 * @param id doc
+	 * @param reader index reader
 	 * @return first field value
-	 * @see #getFieldValues(int)
+	 * @see #getFieldValues(BoboIndexReader,int)
 	 */
-	public String getFieldValue(int id)
+	public String getFieldValue(BoboIndexReader reader,int id)
 	{
-		return getFieldValues(id)[0];
+		return getFieldValues(reader,id)[0];
 	}
 	
 	/**
 	 * builds a comparator to determine how sorting is done
 	 * @return a sort comparator
 	 */
-	abstract public ScoreDocComparator getScoreDocComparator();
+	abstract public DocComparatorSource getDocComparatorSource();
 	
 	@Override
 	public Object clone() throws CloneNotSupportedException

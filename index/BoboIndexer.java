@@ -25,21 +25,16 @@
 
 package com.browseengine.bobo.index;
 
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.index.IndexWriter;
+import org.apache.lucene.index.IndexWriter.MaxFieldLength;
 import org.apache.lucene.store.Directory;
-import org.apache.lucene.store.IndexInput;
-import org.apache.lucene.store.IndexOutput;
+import org.apache.lucene.util.Version;
 
-import com.browseengine.bobo.api.BoboIndexReader;
-import com.browseengine.bobo.config.FieldConfiguration;
-import com.browseengine.bobo.config.impl.XMLFieldConfigurationBuilder;
 import com.browseengine.bobo.index.digest.DataDigester;
 
 public class BoboIndexer {	
@@ -63,7 +58,7 @@ public class BoboIndexer {
 	}
 	
 	private Analyzer getAnalyzer(){
-		return _analyzer == null ? new StandardAnalyzer() : _analyzer;
+		return _analyzer == null ? new StandardAnalyzer(Version.LUCENE_CURRENT) : _analyzer;
 	}
 		
 	public BoboIndexer(DataDigester digester,Directory index){
@@ -73,12 +68,9 @@ public class BoboIndexer {
 	}	
 
 	public void index() throws IOException{
-		
-		boolean create=!BoboIndexReader.indexExists(_index);
-		
 		_writer=null;
 		try{
-			_writer=new IndexWriter(_index,getAnalyzer(),create);
+			_writer=new IndexWriter(_index,getAnalyzer(),MaxFieldLength.UNLIMITED);
 			MyDataHandler handler=new MyDataHandler(_writer);
 			_digester.digest(handler);
 			_writer.optimize();

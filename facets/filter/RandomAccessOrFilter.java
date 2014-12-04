@@ -4,11 +4,12 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
-import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.search.DocIdSet;
 import org.apache.lucene.search.DocIdSetIterator;
 
+import com.browseengine.bobo.api.BoboIndexReader;
 import com.browseengine.bobo.docidset.RandomAccessDocIdSet;
+import com.browseengine.bobo.facets.data.FacetDataCache;
 import com.kamikaze.docidset.impl.OrDocIdSet;
 
 public class RandomAccessOrFilter extends RandomAccessFilter
@@ -28,8 +29,23 @@ public class RandomAccessOrFilter extends RandomAccessFilter
     _filters = filters;
   }
   
+  public double getFacetSelectivity(BoboIndexReader reader)
+  {
+    double selectivity = 0;
+    for(RandomAccessFilter filter : _filters)
+    {
+      selectivity += filter.getFacetSelectivity(reader);
+    }
+    
+    if(selectivity > 0.999)
+    {
+      selectivity = 1.0;
+    }
+    return selectivity;
+  }
+  
   @Override
-  public RandomAccessDocIdSet getRandomAccessDocIdSet(IndexReader reader) throws IOException
+  public RandomAccessDocIdSet getRandomAccessDocIdSet(BoboIndexReader reader) throws IOException
   {
     if(_filters.size() == 1)
     {
@@ -60,7 +76,7 @@ public class RandomAccessOrFilter extends RandomAccessFilter
         }
 
         @Override
-        public DocIdSetIterator iterator()
+        public DocIdSetIterator iterator() throws IOException
         {
           return orDocIdSet.iterator();
         }
